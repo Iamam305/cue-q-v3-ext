@@ -1,4 +1,4 @@
-import { RiFolderLine, RiSearchLine } from '@remixicon/react';
+import { RiSearchLine } from '@remixicon/react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,
@@ -11,19 +11,14 @@ import {
 import { getActiveAdapter } from '@/lib/adapters';
 import {
   DEFAULT_PAGE_LIMIT,
-  type FolderDto,
-  fetchFolders,
-  fetchPrompts,
+  fetchQuickSearchPrompts,
   type PromptDto,
 } from '@/lib/api';
-import {
-  type SearchOutcome,
-  type SearchResult,
-  searchLibrary,
-  shouldExitFolderOnBackspace,
-} from '@/lib/quick-search/search';
+import { shouldExitFolderOnBackspace } from '@/lib/quick-search/search';
 import { getToken } from '@/lib/storage';
 import { cn } from '@/lib/utils';
+
+const SEARCH_DEBOUNCE_MS = 180;
 
 export type PromptPaletteProps = {
   open: boolean;
@@ -40,12 +35,13 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const requestIdRef = useRef(0);
 
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [prompts, setPrompts] = useState<PromptDto[]>([]);
-  const [folders, setFolders] = useState<FolderDto[]>([]);
-  const [promptsHasMore, setPromptsHasMore] = useState(false);
-  const [foldersHasMore, setFoldersHasMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [folderNotFound, setFolderNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -53,107 +49,91 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const [insertError, setInsertError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const outcome: SearchOutcome = searchLibrary(query, prompts, folders);
-  const results: SearchResult[] =
-    outcome.status === 'ok' ? outcome.results : [];
-  const hasMoreLibrary = promptsHasMore || foldersHasMore;
-
   const resetTransient = useCallback(() => {
     setQuery('');
+    setDebouncedQuery('');
     setInsertError(null);
     setSelectedIndex(0);
+    setPrompts([]);
+    setHasMore(false);
+    setFolderNotFound(false);
+    setLoadError(null);
   }, []);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    setSignedOut(false);
-    try {
-      const token = await getToken();
-      if (!token) {
-        setSignedOut(true);
-        setPrompts([]);
-        setFolders([]);
-        setPromptsHasMore(false);
-        setFoldersHasMore(false);
-        return;
-      }
-      const [promptPage, folderPage] = await Promise.all([
-        fetchPrompts({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
-        fetchFolders({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
-      ]);
-      setPrompts(promptPage.prompts);
-      setFolders(folderPage.folders);
-      setPromptsHasMore(promptPage.pagination.hasMore);
-      setFoldersHasMore(folderPage.pagination.hasMore);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load prompts';
-      if (message === 'Unauthorized') {
-        setSignedOut(true);
-      } else {
-        setLoadError(message);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => {
+      setDebouncedQuery(query);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query, open]);
 
-  const loadMoreLibrary = useCallback(async () => {
-    if (loadingMore || (!promptsHasMore && !foldersHasMore)) return;
-    setLoadingMore(true);
-    setLoadError(null);
-    try {
-      const tasks: Promise<void>[] = [];
-      if (promptsHasMore) {
-        tasks.push(
-          fetchPrompts({
-            limit: DEFAULT_PAGE_LIMIT,
-            offset: prompts.length,
-          }).then((page) => {
-            setPrompts((prev) => [...prev, ...page.prompts]);
-            setPromptsHasMore(page.pagination.hasMore);
-          }),
-        );
-      }
-      if (foldersHasMore) {
-        tasks.push(
-          fetchFolders({
-            limit: DEFAULT_PAGE_LIMIT,
-            offset: folders.length,
-          }).then((page) => {
-            setFolders((prev) => [...prev, ...page.folders]);
-            setFoldersHasMore(page.pagination.hasMore);
-          }),
-        );
-      }
-      await Promise.all(tasks);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load more';
-      if (message === 'Unauthorized') {
-        setSignedOut(true);
+  const loadPage = useCallback(
+    async (searchQuery: string, offset: number, append: boolean) => {
+      const requestId = ++requestIdRef.current;
+      if (append) {
+        setLoadingMore(true);
       } else {
-        setLoadError(message);
+        setLoading(true);
       }
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [
-    loadingMore,
-    promptsHasMore,
-    foldersHasMore,
-    prompts.length,
-    folders.length,
-  ]);
+      setLoadError(null);
+      setSignedOut(false);
+
+      try {
+        const token = await getToken();
+        if (!token) {
+          if (requestId !== requestIdRef.current) return;
+          setSignedOut(true);
+          setPrompts([]);
+          setHasMore(false);
+          setFolderNotFound(false);
+          return;
+        }
+
+        const page = await fetchQuickSearchPrompts({
+          q: searchQuery,
+          limit: DEFAULT_PAGE_LIMIT,
+          offset,
+        });
+
+        if (requestId !== requestIdRef.current) return;
+
+        setPrompts((prev) =>
+          append ? [...prev, ...page.prompts] : page.prompts,
+        );
+        setHasMore(page.pagination.hasMore);
+        setFolderNotFound(page.folderNotFound === true);
+      } catch (err) {
+        if (requestId !== requestIdRef.current) return;
+        const message =
+          err instanceof Error ? err.message : 'Failed to load prompts';
+        if (message === 'Unauthorized') {
+          setSignedOut(true);
+        } else {
+          setLoadError(message);
+        }
+        if (!append) {
+          setPrompts([]);
+          setHasMore(false);
+          setFolderNotFound(false);
+        }
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open) {
       resetTransient();
       return;
     }
-    void loadData();
-  }, [open, loadData, resetTransient]);
+    void loadPage(debouncedQuery, 0, false);
+  }, [open, debouncedQuery, loadPage, resetTransient]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -165,21 +145,15 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [query, outcome.status]);
+  }, [debouncedQuery, folderNotFound]);
 
   useEffect(() => {
-    if (!open || results.length === 0) return;
+    if (!open || prompts.length === 0) return;
     const el = listRef.current?.querySelector<HTMLElement>(
       `[data-index="${selectedIndex}"]`,
     );
     el?.scrollIntoView({ block: 'nearest' });
-  }, [selectedIndex, open, results.length]);
-
-  const enterFolder = useCallback((folder: FolderDto) => {
-    setQuery(`${folder.name}/`);
-    setInsertError(null);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, []);
+  }, [selectedIndex, open, prompts.length]);
 
   const insertPrompt = useCallback(
     (prompt: PromptDto) => {
@@ -198,16 +172,17 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     [onClose],
   );
 
-  const activateResult = useCallback(
-    (result: SearchResult) => {
-      if (result.kind === 'folder') {
-        enterFolder(result.folder);
-        return;
-      }
-      insertPrompt(result.prompt);
-    },
-    [enterFolder, insertPrompt],
-  );
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore || loading) return;
+    void loadPage(debouncedQuery, prompts.length, true);
+  }, [
+    loadingMore,
+    hasMore,
+    loading,
+    loadPage,
+    debouncedQuery,
+    prompts.length,
+  ]);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
@@ -220,24 +195,24 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       event.stopPropagation();
-      if (results.length === 0) return;
-      setSelectedIndex((i) => (i + 1) % results.length);
+      if (prompts.length === 0) return;
+      setSelectedIndex((i) => (i + 1) % prompts.length);
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
-      if (results.length === 0) return;
-      setSelectedIndex((i) => (i - 1 + results.length) % results.length);
+      if (prompts.length === 0) return;
+      setSelectedIndex((i) => (i - 1 + prompts.length) % prompts.length);
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
-      const result = results[selectedIndex];
-      if (result) activateResult(result);
+      const prompt = prompts[selectedIndex];
+      if (prompt) insertPrompt(prompt);
       return;
     }
 
@@ -302,7 +277,7 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
             aria-autocomplete="list"
             aria-controls={listId}
             aria-activedescendant={
-              results[selectedIndex]
+              prompts[selectedIndex]
                 ? `${listId}-item-${selectedIndex}`
                 : undefined
             }
@@ -326,53 +301,33 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
             <EmptyMessage title="Loading prompts…" />
           ) : loadError ? (
             <EmptyMessage title="Couldn't load prompts" detail={loadError} />
-          ) : outcome.status === 'empty_library' ? (
-            <EmptyMessage title="No saved prompts yet" />
-          ) : outcome.status === 'no_matching_folder' ? (
+          ) : folderNotFound ? (
             <EmptyMessage title="No matching folder" />
-          ) : results.length === 0 ? (
-            <div>
-              <EmptyMessage
-                title="No prompts found"
-                detail="Try a different search."
-              />
-              {hasMoreLibrary ? (
-                <div className="px-3 pb-3">
-                  <button
-                    type="button"
-                    className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
-                    disabled={loadingMore}
-                    onClick={() => void loadMoreLibrary()}
-                  >
-                    {loadingMore ? 'Loading…' : 'Load more'}
-                  </button>
-                </div>
-              ) : null}
-            </div>
+          ) : prompts.length === 0 ? (
+            <EmptyMessage
+              title="No prompts found"
+              detail="Try a different search."
+            />
           ) : (
             <>
-              {results.map((result, index) => (
+              {prompts.map((prompt, index) => (
                 <ResultRow
-                  key={
-                    result.kind === 'folder'
-                      ? `folder-${result.folder.id}`
-                      : `prompt-${result.prompt.id}`
-                  }
+                  key={prompt.id}
                   id={`${listId}-item-${index}`}
                   index={index}
                   selected={index === selectedIndex}
-                  result={result}
+                  prompt={prompt}
                   onHover={() => setSelectedIndex(index)}
-                  onSelect={() => activateResult(result)}
+                  onSelect={() => insertPrompt(prompt)}
                 />
               ))}
-              {hasMoreLibrary ? (
+              {hasMore ? (
                 <div className="px-3 py-2">
                   <button
                     type="button"
                     className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
                     disabled={loadingMore}
-                    onClick={() => void loadMoreLibrary()}
+                    onClick={() => void loadMore()}
                   >
                     {loadingMore ? 'Loading…' : 'Load more'}
                   </button>
@@ -425,47 +380,17 @@ function ResultRow({
   id,
   index,
   selected,
-  result,
+  prompt,
   onHover,
   onSelect,
 }: {
   id: string;
   index: number;
   selected: boolean;
-  result: SearchResult;
+  prompt: PromptDto;
   onHover: () => void;
   onSelect: () => void;
 }) {
-  if (result.kind === 'folder') {
-    return (
-      <button
-        type="button"
-        id={id}
-        data-index={index}
-        role="option"
-        aria-selected={selected}
-        className={cn(
-          'flex w-full items-start gap-2.5 px-3 py-2 text-left',
-          selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
-        )}
-        onMouseEnter={onHover}
-        onClick={onSelect}
-      >
-        <RiFolderLine className="mt-0.5 size-4 shrink-0 opacity-70" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">
-            {result.folder.name}
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            {result.promptCount}{' '}
-            {result.promptCount === 1 ? 'prompt' : 'prompts'}
-          </span>
-        </span>
-      </button>
-    );
-  }
-
-  const { prompt } = result;
   const path = prompt.folderName ?? 'Unfiled';
 
   return (

@@ -44,6 +44,10 @@ export type PaginatedPrompts = {
   pagination: PaginationMeta;
 };
 
+export type QuickSearchPrompts = PaginatedPrompts & {
+  folderNotFound?: boolean;
+};
+
 export type MeResponse = {
   user: CueqUser;
   session: {
@@ -191,6 +195,28 @@ export async function fetchPrompts(input?: {
   const qs = params.toString();
   const res = await apiFetch(`/api/prompts${qs ? `?${qs}` : ''}`);
   return parseJson<PaginatedPrompts>(res);
+}
+
+export async function fetchQuickSearchPrompts(input?: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<QuickSearchPrompts> {
+  const params = new URLSearchParams();
+  if (input?.q !== undefined) {
+    params.set('q', input.q);
+  }
+  if (input?.limit !== undefined) {
+    params.set('limit', String(input.limit));
+  }
+  if (input?.offset !== undefined) {
+    params.set('offset', String(input.offset));
+  }
+  const qs = params.toString();
+  const res = await apiFetch(
+    `/api/prompts/quick-search${qs ? `?${qs}` : ''}`,
+  );
+  return parseJson<QuickSearchPrompts>(res);
 }
 
 export async function createPromptApi(input: {
