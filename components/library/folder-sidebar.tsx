@@ -16,6 +16,9 @@ type FolderSidebarProps = {
   folders: FolderDto[];
   value: FolderFilter;
   currentUserId: string;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
   onChange: (next: FolderFilter) => void;
   onCreate: () => void;
   onEdit: (folder: FolderDto) => void;
@@ -27,6 +30,9 @@ export function FolderSidebar({
   folders,
   value,
   currentUserId,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
   onChange,
   onCreate,
   onEdit,
@@ -139,6 +145,17 @@ export function FolderSidebar({
             );
           })
         )}
+        {hasMore && onLoadMore ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="w-full"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        ) : null}
       </div>
     </aside>
   );

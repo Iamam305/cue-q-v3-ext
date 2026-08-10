@@ -1,6 +1,15 @@
 import { APP_URL } from '@/lib/config';
 import { clearSession, getToken, type CueqUser } from '@/lib/storage';
 
+export const DEFAULT_PAGE_LIMIT = 20;
+
+export type PaginationMeta = {
+  limit: number;
+  offset: number;
+  total: number;
+  hasMore: boolean;
+};
+
 export type FolderDto = {
   id: string;
   organizationId: string;
@@ -23,6 +32,16 @@ export type PromptDto = {
   isShared: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
+};
+
+export type PaginatedFolders = {
+  folders: FolderDto[];
+  pagination: PaginationMeta;
+};
+
+export type PaginatedPrompts = {
+  prompts: PromptDto[];
+  pagination: PaginationMeta;
 };
 
 export type MeResponse = {
@@ -78,15 +97,39 @@ export async function getMe(): Promise<MeResponse> {
   return parseJson<MeResponse>(res);
 }
 
-export async function fetchFolders(q?: string): Promise<FolderDto[]> {
+export async function fetchFolders(input?: {
+  q?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<PaginatedFolders> {
   const params = new URLSearchParams();
-  if (q?.trim()) {
-    params.set('q', q.trim());
+  if (input?.q?.trim()) {
+    params.set('q', input.q.trim());
+  }
+  if (input?.limit !== undefined) {
+    params.set('limit', String(input.limit));
+  }
+  if (input?.offset !== undefined) {
+    params.set('offset', String(input.offset));
   }
   const qs = params.toString();
   const res = await apiFetch(`/api/folders${qs ? `?${qs}` : ''}`);
-  const data = await parseJson<{ folders: FolderDto[] }>(res);
-  return data.folders;
+  return parseJson<PaginatedFolders>(res);
+}
+
+export async function fetchAllFolders(q?: string): Promise<FolderDto[]> {
+  const folders: FolderDto[] = [];
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const page = await fetchFolders({ q, limit: 100, offset });
+    folders.push(...page.folders);
+    hasMore = page.pagination.hasMore;
+    offset = page.pagination.offset + page.pagination.limit;
+  }
+
+  return folders;
 }
 
 export async function createFolderApi(input: {
@@ -122,7 +165,9 @@ export async function fetchPrompts(input?: {
   q?: string;
   folderId?: string | null;
   shared?: boolean;
-}): Promise<PromptDto[]> {
+  limit?: number;
+  offset?: number;
+}): Promise<PaginatedPrompts> {
   const params = new URLSearchParams();
   if (input?.q?.trim()) {
     params.set('q', input.q.trim());
@@ -137,10 +182,15 @@ export async function fetchPrompts(input?: {
   } else if (input?.shared === false) {
     params.set('shared', 'false');
   }
+  if (input?.limit !== undefined) {
+    params.set('limit', String(input.limit));
+  }
+  if (input?.offset !== undefined) {
+    params.set('offset', String(input.offset));
+  }
   const qs = params.toString();
   const res = await apiFetch(`/api/prompts${qs ? `?${qs}` : ''}`);
-  const data = await parseJson<{ prompts: PromptDto[] }>(res);
-  return data.prompts;
+  return parseJson<PaginatedPrompts>(res);
 }
 
 export async function createPromptApi(input: {

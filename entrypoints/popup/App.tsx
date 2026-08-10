@@ -97,7 +97,7 @@ export default function App() {
           </p>
         ) : null}
         <Button
-          className="mt-6 w-full max-w-[14rem]"
+          className="mt-6 w-full max-w-56"
           disabled={signingIn}
           onClick={() => void handleSignIn()}
         >

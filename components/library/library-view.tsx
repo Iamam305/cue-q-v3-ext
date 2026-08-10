@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  DEFAULT_PAGE_LIMIT,
   deleteFolderApi,
   deletePromptApi,
   type FolderDto,
@@ -45,6 +46,10 @@ export function LibraryView({
   const currentUserId = user.id;
   const [folders, setFolders] = useState<FolderDto[]>([]);
   const [prompts, setPrompts] = useState<PromptDto[]>([]);
+  const [foldersHasMore, setFoldersHasMore] = useState(false);
+  const [promptsHasMore, setPromptsHasMore] = useState(false);
+  const [loadingFoldersMore, setLoadingFoldersMore] = useState(false);
+  const [loadingPromptsMore, setLoadingPromptsMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -77,59 +82,125 @@ export function LibraryView({
     [onUnauthorized],
   );
 
-  const loadFolders = useCallback(async () => {
-    try {
-      const next = await fetchFolders();
-      setFolders(next);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load folders';
-      if (!handleUnauthorized(message)) {
-        setError(message);
+  const loadFolders = useCallback(
+    async (opts?: { append?: boolean }) => {
+      const append = opts?.append ?? false;
+      try {
+        if (append) setLoadingFoldersMore(true);
+        const offset = append ? folders.length : 0;
+        const page = await fetchFolders({
+          limit: DEFAULT_PAGE_LIMIT,
+          offset,
+        });
+        setFolders((prev) =>
+          append ? [...prev, ...page.folders] : page.folders,
+        );
+        setFoldersHasMore(page.pagination.hasMore);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load folders';
+        if (!handleUnauthorized(message)) {
+          setError(message);
+        }
+      } finally {
+        if (append) setLoadingFoldersMore(false);
       }
-    }
-  }, [handleUnauthorized]);
+    },
+    [folders.length, handleUnauthorized],
+  );
 
-  const loadPrompts = useCallback(async () => {
-    try {
-      const folderId =
-        folderFilter === 'all'
-          ? undefined
-          : folderFilter === 'none'
-            ? null
-            : folderFilter;
+  const loadPrompts = useCallback(
+    async (opts?: { append?: boolean }) => {
+      const append = opts?.append ?? false;
+      try {
+        if (append) setLoadingPromptsMore(true);
+        const folderId =
+          folderFilter === 'all'
+            ? undefined
+            : folderFilter === 'none'
+              ? null
+              : folderFilter;
 
-      const shared =
-        sharedFilter === 'all' ? undefined : sharedFilter === 'shared';
+        const shared =
+          sharedFilter === 'all' ? undefined : sharedFilter === 'shared';
 
-      const next = await fetchPrompts({
-        q: debouncedSearch || undefined,
-        folderId,
-        shared,
-      });
-      setPrompts(next);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load prompts';
-      if (!handleUnauthorized(message)) {
-        setError(message);
+        const offset = append ? prompts.length : 0;
+        const page = await fetchPrompts({
+          q: debouncedSearch || undefined,
+          folderId,
+          shared,
+          limit: DEFAULT_PAGE_LIMIT,
+          offset,
+        });
+        setPrompts((prev) =>
+          append ? [...prev, ...page.prompts] : page.prompts,
+        );
+        setPromptsHasMore(page.pagination.hasMore);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load prompts';
+        if (!handleUnauthorized(message)) {
+          setError(message);
+        }
+      } finally {
+        if (append) setLoadingPromptsMore(false);
       }
-    }
-  }, [debouncedSearch, folderFilter, sharedFilter, handleUnauthorized]);
+    },
+    [
+      debouncedSearch,
+      folderFilter,
+      sharedFilter,
+      prompts.length,
+      handleUnauthorized,
+    ],
+  );
 
   useEffect(() => {
     let cancelled = false;
     async function init() {
       setLoading(true);
       setError(null);
-      await Promise.all([loadFolders(), loadPrompts()]);
-      if (!cancelled) setLoading(false);
+      try {
+        const folderId =
+          folderFilter === 'all'
+            ? undefined
+            : folderFilter === 'none'
+              ? null
+              : folderFilter;
+        const shared =
+          sharedFilter === 'all' ? undefined : sharedFilter === 'shared';
+
+        const [folderPage, promptPage] = await Promise.all([
+          fetchFolders({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
+          fetchPrompts({
+            q: debouncedSearch || undefined,
+            folderId,
+            shared,
+            limit: DEFAULT_PAGE_LIMIT,
+            offset: 0,
+          }),
+        ]);
+        if (cancelled) return;
+        setFolders(folderPage.folders);
+        setFoldersHasMore(folderPage.pagination.hasMore);
+        setPrompts(promptPage.prompts);
+        setPromptsHasMore(promptPage.pagination.hasMore);
+      } catch (err) {
+        if (cancelled) return;
+        const message =
+          err instanceof Error ? err.message : 'Failed to load library';
+        if (!handleUnauthorized(message)) {
+          setError(message);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     void init();
     return () => {
       cancelled = true;
     };
-  }, [loadFolders, loadPrompts]);
+  }, [debouncedSearch, folderFilter, sharedFilter, handleUnauthorized]);
 
   function openCreatePrompt() {
     setEditingPrompt(null);
@@ -267,6 +338,9 @@ export function LibraryView({
             folders={folders}
             value={folderFilter}
             currentUserId={currentUserId}
+            hasMore={foldersHasMore}
+            loadingMore={loadingFoldersMore}
+            onLoadMore={() => void loadFolders({ append: true })}
             onChange={setFolderFilter}
             onCreate={openCreateFolder}
             onEdit={openEditFolder}
@@ -326,26 +400,40 @@ export function LibraryView({
                 </Button>
               </div>
             ) : (
-              <ul className="overflow-hidden rounded-xl border border-border/70 bg-card/60 ring-1 ring-foreground/5">
-                {prompts.map((item) => (
-                  <PromptRow
-                    key={item.id}
-                    prompt={item}
-                    expanded={expandedId === item.id}
-                    isOwner={item.ownerId === currentUserId}
-                    onToggle={() =>
-                      setExpandedId((prev) =>
-                        prev === item.id ? null : item.id,
-                      )
-                    }
-                    onEdit={() => openEditPrompt(item)}
-                    onShare={() => void handleTogglePromptShare(item)}
-                    onDelete={() =>
-                      setConfirm({ type: 'prompt', prompt: item })
-                    }
-                  />
-                ))}
-              </ul>
+              <div className="space-y-2">
+                <ul className="overflow-hidden rounded-xl border border-border/70 bg-card/60 ring-1 ring-foreground/5">
+                  {prompts.map((item) => (
+                    <PromptRow
+                      key={item.id}
+                      prompt={item}
+                      expanded={expandedId === item.id}
+                      isOwner={item.ownerId === currentUserId}
+                      onToggle={() =>
+                        setExpandedId((prev) =>
+                          prev === item.id ? null : item.id,
+                        )
+                      }
+                      onEdit={() => openEditPrompt(item)}
+                      onShare={() => void handleTogglePromptShare(item)}
+                      onDelete={() =>
+                        setConfirm({ type: 'prompt', prompt: item })
+                      }
+                    />
+                  ))}
+                </ul>
+                {promptsHasMore ? (
+                  <div className="flex justify-center pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={loadingPromptsMore}
+                      onClick={() => void loadPrompts({ append: true })}
+                    >
+                      {loadingPromptsMore ? 'Loading…' : 'Load more'}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
             )}
           </div>
         </section>

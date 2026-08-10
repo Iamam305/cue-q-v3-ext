@@ -7,6 +7,7 @@ import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
   createPromptApi,
+  fetchAllFolders,
   type FolderDto,
   type PromptDto,
   updatePromptApi,
@@ -18,7 +19,7 @@ type PromptFormProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prompt?: PromptDto | null;
-  folders: FolderDto[];
+  folders?: FolderDto[];
   defaultFolderId?: string | null;
   onSaved: (prompt: PromptDto) => void;
 };
@@ -27,7 +28,7 @@ export function PromptForm({
   open,
   onOpenChange,
   prompt,
-  folders,
+  folders: foldersProp = [],
   defaultFolderId,
   onSaved,
 }: PromptFormProps) {
@@ -35,19 +36,34 @@ export function PromptForm({
   const [content, setContent] = useState('');
   const [folderId, setFolderId] = useState(NONE_FOLDER);
   const [isShared, setIsShared] = useState(false);
+  const [folders, setFolders] = useState<FolderDto[]>(foldersProp);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isEdit = Boolean(prompt);
 
   useEffect(() => {
-    if (open) {
-      setTitle(prompt?.title ?? '');
-      setContent(prompt?.content ?? '');
-      setFolderId(prompt?.folderId ?? defaultFolderId ?? NONE_FOLDER);
-      setIsShared(prompt?.isShared ?? false);
-      setError(null);
-    }
-  }, [open, prompt, defaultFolderId]);
+    if (!open) return;
+
+    setTitle(prompt?.title ?? '');
+    setContent(prompt?.content ?? '');
+    setFolderId(prompt?.folderId ?? defaultFolderId ?? NONE_FOLDER);
+    setIsShared(prompt?.isShared ?? false);
+    setFolders(foldersProp);
+    setError(null);
+
+    let cancelled = false;
+    void fetchAllFolders()
+      .then((next) => {
+        if (!cancelled) setFolders(next);
+      })
+      .catch(() => {
+        /* keep prop/fallback list */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, prompt, defaultFolderId, foldersProp]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

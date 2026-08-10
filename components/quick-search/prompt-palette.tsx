@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { getActiveAdapter } from '@/lib/adapters';
 import {
+  DEFAULT_PAGE_LIMIT,
   type FolderDto,
   fetchFolders,
   fetchPrompts,
@@ -43,7 +44,10 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const [query, setQuery] = useState('');
   const [prompts, setPrompts] = useState<PromptDto[]>([]);
   const [folders, setFolders] = useState<FolderDto[]>([]);
+  const [promptsHasMore, setPromptsHasMore] = useState(false);
+  const [foldersHasMore, setFoldersHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const [insertError, setInsertError] = useState<string | null>(null);
@@ -52,6 +56,7 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const outcome: SearchOutcome = searchLibrary(query, prompts, folders);
   const results: SearchResult[] =
     outcome.status === 'ok' ? outcome.results : [];
+  const hasMoreLibrary = promptsHasMore || foldersHasMore;
 
   const resetTransient = useCallback(() => {
     setQuery('');
@@ -69,14 +74,18 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
         setSignedOut(true);
         setPrompts([]);
         setFolders([]);
+        setPromptsHasMore(false);
+        setFoldersHasMore(false);
         return;
       }
-      const [nextPrompts, nextFolders] = await Promise.all([
-        fetchPrompts(),
-        fetchFolders(),
+      const [promptPage, folderPage] = await Promise.all([
+        fetchPrompts({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
+        fetchFolders({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
       ]);
-      setPrompts(nextPrompts);
-      setFolders(nextFolders);
+      setPrompts(promptPage.prompts);
+      setFolders(folderPage.folders);
+      setPromptsHasMore(promptPage.pagination.hasMore);
+      setFoldersHasMore(folderPage.pagination.hasMore);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to load prompts';
@@ -89,6 +98,54 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
       setLoading(false);
     }
   }, []);
+
+  const loadMoreLibrary = useCallback(async () => {
+    if (loadingMore || (!promptsHasMore && !foldersHasMore)) return;
+    setLoadingMore(true);
+    setLoadError(null);
+    try {
+      const tasks: Promise<void>[] = [];
+      if (promptsHasMore) {
+        tasks.push(
+          fetchPrompts({
+            limit: DEFAULT_PAGE_LIMIT,
+            offset: prompts.length,
+          }).then((page) => {
+            setPrompts((prev) => [...prev, ...page.prompts]);
+            setPromptsHasMore(page.pagination.hasMore);
+          }),
+        );
+      }
+      if (foldersHasMore) {
+        tasks.push(
+          fetchFolders({
+            limit: DEFAULT_PAGE_LIMIT,
+            offset: folders.length,
+          }).then((page) => {
+            setFolders((prev) => [...prev, ...page.folders]);
+            setFoldersHasMore(page.pagination.hasMore);
+          }),
+        );
+      }
+      await Promise.all(tasks);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to load more';
+      if (message === 'Unauthorized') {
+        setSignedOut(true);
+      } else {
+        setLoadError(message);
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [
+    loadingMore,
+    promptsHasMore,
+    foldersHasMore,
+    prompts.length,
+    folders.length,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -274,26 +331,54 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
           ) : outcome.status === 'no_matching_folder' ? (
             <EmptyMessage title="No matching folder" />
           ) : results.length === 0 ? (
-            <EmptyMessage
-              title="No prompts found"
-              detail="Try a different search."
-            />
-          ) : (
-            results.map((result, index) => (
-              <ResultRow
-                key={
-                  result.kind === 'folder'
-                    ? `folder-${result.folder.id}`
-                    : `prompt-${result.prompt.id}`
-                }
-                id={`${listId}-item-${index}`}
-                index={index}
-                selected={index === selectedIndex}
-                result={result}
-                onHover={() => setSelectedIndex(index)}
-                onSelect={() => activateResult(result)}
+            <div>
+              <EmptyMessage
+                title="No prompts found"
+                detail="Try a different search."
               />
-            ))
+              {hasMoreLibrary ? (
+                <div className="px-3 pb-3">
+                  <button
+                    type="button"
+                    className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
+                    disabled={loadingMore}
+                    onClick={() => void loadMoreLibrary()}
+                  >
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              {results.map((result, index) => (
+                <ResultRow
+                  key={
+                    result.kind === 'folder'
+                      ? `folder-${result.folder.id}`
+                      : `prompt-${result.prompt.id}`
+                  }
+                  id={`${listId}-item-${index}`}
+                  index={index}
+                  selected={index === selectedIndex}
+                  result={result}
+                  onHover={() => setSelectedIndex(index)}
+                  onSelect={() => activateResult(result)}
+                />
+              ))}
+              {hasMoreLibrary ? (
+                <div className="px-3 py-2">
+                  <button
+                    type="button"
+                    className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
+                    disabled={loadingMore}
+                    onClick={() => void loadMoreLibrary()}
+                  >
+                    {loadingMore ? 'Loading…' : 'Load more'}
+                  </button>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
 
