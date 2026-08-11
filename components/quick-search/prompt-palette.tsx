@@ -138,9 +138,44 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   useLayoutEffect(() => {
     if (!open) return;
     const id = requestAnimationFrame(() => {
-      inputRef.current?.focus();
+      inputRef.current?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(id);
+  }, [open]);
+
+  // Keep focus inside the shadow UI — Claude (and similar) steal it because
+  // document.activeElement is the shadow host, not the search input.
+  useEffect(() => {
+    if (!open) return;
+
+    const input = inputRef.current;
+    if (!input) return;
+
+    const root = input.getRootNode();
+    const host = root instanceof ShadowRoot ? root.host : null;
+
+    const inerted: HTMLElement[] = [];
+    if (host) {
+      for (const child of Array.from(document.body.children)) {
+        if (child !== host && child instanceof HTMLElement && !child.inert) {
+          child.inert = true;
+          inerted.push(child);
+        }
+      }
+    }
+
+    const onFocusIn = (event: FocusEvent) => {
+      if (host && event.composedPath().includes(host)) return;
+      input.focus({ preventScroll: true });
+    };
+
+    document.addEventListener('focusin', onFocusIn, true);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn, true);
+      for (const el of inerted) {
+        el.inert = false;
+      }
+    };
   }, [open]);
 
   useEffect(() => {
@@ -185,16 +220,17 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   ]);
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    // Always stop bubbling so the host page (esp. Claude) never sees palette keys.
+    event.stopPropagation();
+
     if (event.key === 'Escape') {
       event.preventDefault();
-      event.stopPropagation();
       onClose();
       return;
     }
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      event.stopPropagation();
       if (prompts.length === 0) return;
       setSelectedIndex((i) => (i + 1) % prompts.length);
       return;
@@ -202,7 +238,6 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      event.stopPropagation();
       if (prompts.length === 0) return;
       setSelectedIndex((i) => (i - 1 + prompts.length) % prompts.length);
       return;
@@ -210,7 +245,6 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      event.stopPropagation();
       const prompt = prompts[selectedIndex];
       if (prompt) insertPrompt(prompt);
       return;
@@ -236,13 +270,14 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
       className="fixed inset-0 z-2147483646 flex justify-center"
       style={{ paddingTop: '15vh' }}
       role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div
         className="absolute inset-0 bg-black/35"
         aria-hidden="true"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
       />
 
       <div

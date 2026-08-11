@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { PromptPalette } from '@/components/quick-search/prompt-palette';
+import { injectNotoSansFonts } from '@/lib/inject-fonts';
 import '@/assets/content.css';
 
 function QuickSearchApp() {
@@ -52,6 +53,8 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    injectNotoSansFonts();
+
     const ui = await createShadowRootUi(ctx, {
       name: 'cueq-quick-search',
       position: 'overlay',

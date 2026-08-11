@@ -19,5 +19,15 @@ export default defineConfig({
       'https://localhost:3000/*',
       'https://cue-q.com/*',
     ],
+    web_accessible_resources: [
+      {
+        resources: ['fonts/*.woff2'],
+        matches: [
+          '*://chatgpt.com/*',
+          '*://chat.openai.com/*',
+          '*://claude.ai/*',
+        ],
+      },
+    ],
   },
 });
