@@ -1,6 +1,8 @@
 import { RiSearchLine } from '@remixicon/react';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useId,
@@ -8,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { Badge } from '@/components/ui/badge';
 import { getActiveAdapter } from '@/lib/adapters';
 import {
   DEFAULT_PAGE_LIMIT,
@@ -36,9 +39,10 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const requestIdRef = useRef(0);
+  const loadedQueryRef = useRef('');
+  const wasOpenRef = useRef(false);
 
   const [query, setQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [prompts, setPrompts] = useState<PromptDto[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [folderNotFound, setFolderNotFound] = useState(false);
@@ -51,7 +55,6 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
   const resetTransient = useCallback(() => {
     setQuery('');
-    setDebouncedQuery('');
     setInsertError(null);
     setSelectedIndex(0);
     setPrompts([]);
@@ -60,14 +63,6 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     setLoadError(null);
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setTimeout(() => {
-      setDebouncedQuery(query);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [query, open]);
-
   const loadPage = useCallback(
     async (searchQuery: string, offset: number, append: boolean) => {
       const requestId = ++requestIdRef.current;
@@ -75,6 +70,7 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
         setLoadingMore(true);
       } else {
         setLoading(true);
+        setSelectedIndex(0);
       }
       setLoadError(null);
       setSignedOut(false);
@@ -98,6 +94,7 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
         if (requestId !== requestIdRef.current) return;
 
+        loadedQueryRef.current = searchQuery;
         setPrompts((prev) =>
           append ? [...prev, ...page.prompts] : page.prompts,
         );
@@ -129,11 +126,18 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
 
   useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
       resetTransient();
       return;
     }
-    void loadPage(debouncedQuery, 0, false);
-  }, [open, debouncedQuery, loadPage, resetTransient]);
+
+    const delay = wasOpenRef.current ? SEARCH_DEBOUNCE_MS : 0;
+    wasOpenRef.current = true;
+    const timer = window.setTimeout(() => {
+      void loadPage(query, 0, false);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [open, query, loadPage, resetTransient]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -178,27 +182,15 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     };
   }, [open]);
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [debouncedQuery, folderNotFound]);
-
-  useEffect(() => {
-    if (!open || prompts.length === 0) return;
-    const el = listRef.current?.querySelector<HTMLElement>(
-      `[data-index="${selectedIndex}"]`,
-    );
-    el?.scrollIntoView({ block: 'nearest' });
-  }, [selectedIndex, open, prompts.length]);
-
   const insertPrompt = useCallback(
     (prompt: PromptDto) => {
       const adapter = getActiveAdapter();
       const composer = adapter?.findComposer() ?? null;
-      if (!composer) {
+      if (!adapter || !composer) {
         setInsertError("Couldn't find the message input.");
         return;
       }
-      adapter!.insertText(composer, prompt.content);
+      adapter.insertText(composer, prompt.content);
       onClose();
       requestAnimationFrame(() => {
         composer.focus();
@@ -207,17 +199,18 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     [onClose],
   );
 
-  const loadMore = useCallback(() => {
+  const scrollToIndex = (index: number) => {
+    requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-index="${index}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
+    });
+  };
+
+  const loadMore = () => {
     if (loadingMore || !hasMore || loading) return;
-    void loadPage(debouncedQuery, prompts.length, true);
-  }, [
-    loadingMore,
-    hasMore,
-    loading,
-    loadPage,
-    debouncedQuery,
-    prompts.length,
-  ]);
+    void loadPage(loadedQueryRef.current, prompts.length, true);
+  };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     // Always stop bubbling so the host page (esp. Claude) never sees palette keys.
@@ -232,14 +225,18 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       if (prompts.length === 0) return;
-      setSelectedIndex((i) => (i + 1) % prompts.length);
+      const next = (selectedIndex + 1) % prompts.length;
+      setSelectedIndex(next);
+      scrollToIndex(next);
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
       if (prompts.length === 0) return;
-      setSelectedIndex((i) => (i - 1 + prompts.length) % prompts.length);
+      const next = (selectedIndex - 1 + prompts.length) % prompts.length;
+      setSelectedIndex(next);
+      scrollToIndex(next);
       return;
     }
 
@@ -290,87 +287,37 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
         aria-label="Search prompts"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-          <RiSearchLine
-            className="size-4 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setInsertError(null);
-            }}
-            onKeyDown={onKeyDown}
-            placeholder="Search prompts..."
-            className={cn(
-              'min-w-0 flex-1 bg-transparent text-[15px] outline-none',
-              'placeholder:text-muted-foreground',
-            )}
-            aria-autocomplete="list"
-            aria-controls={listId}
-            aria-activedescendant={
-              prompts[selectedIndex]
-                ? `${listId}-item-${selectedIndex}`
-                : undefined
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
+        <SearchHeader
+          inputRef={inputRef}
+          query={query}
+          listId={listId}
+          activeDescendant={
+            prompts[selectedIndex]
+              ? `${listId}-item-${selectedIndex}`
+              : undefined
+          }
+          onQueryChange={(value) => {
+            setQuery(value);
+            setInsertError(null);
+          }}
+          onKeyDown={onKeyDown}
+        />
 
-        <div
-          ref={listRef}
-          id={listId}
-          role="listbox"
-          className="min-h-0 flex-1 overflow-y-auto py-1"
-        >
-          {signedOut ? (
-            <EmptyMessage
-              title="Sign in required"
-              detail="Open the Cue Q extension popup and sign in to search prompts."
-            />
-          ) : loading ? (
-            <EmptyMessage title="Loading prompts…" />
-          ) : loadError ? (
-            <EmptyMessage title="Couldn't load prompts" detail={loadError} />
-          ) : folderNotFound ? (
-            <EmptyMessage title="No matching folder" />
-          ) : prompts.length === 0 ? (
-            <EmptyMessage
-              title="No prompts found"
-              detail="Try a different search."
-            />
-          ) : (
-            <>
-              {prompts.map((prompt, index) => (
-                <ResultRow
-                  key={prompt.id}
-                  id={`${listId}-item-${index}`}
-                  index={index}
-                  selected={index === selectedIndex}
-                  prompt={prompt}
-                  onHover={() => setSelectedIndex(index)}
-                  onSelect={() => insertPrompt(prompt)}
-                />
-              ))}
-              {hasMore ? (
-                <div className="px-3 py-2">
-                  <button
-                    type="button"
-                    className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
-                    disabled={loadingMore}
-                    onClick={() => void loadMore()}
-                  >
-                    {loadingMore ? 'Loading…' : 'Load more'}
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
+        <ResultList
+          listRef={listRef}
+          listId={listId}
+          signedOut={signedOut}
+          loading={loading}
+          loadError={loadError}
+          folderNotFound={folderNotFound}
+          prompts={prompts}
+          selectedIndex={selectedIndex}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onHover={setSelectedIndex}
+          onSelect={insertPrompt}
+          onLoadMore={loadMore}
+        />
 
         {insertError ? (
           <div className="border-t border-border px-3 py-2 text-xs text-destructive">
@@ -378,18 +325,155 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
           </div>
         ) : null}
 
-        <div className="flex gap-4 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-          <span>
-            <kbd className="font-sans">↑↓</kbd> Navigate
-          </span>
-          <span>
-            <kbd className="font-sans">↵</kbd> Insert
-          </span>
-          <span>
-            <kbd className="font-sans">Esc</kbd> Close
-          </span>
-        </div>
+        <PaletteFooter />
       </div>
+    </div>
+  );
+}
+
+function SearchHeader({
+  inputRef,
+  query,
+  listId,
+  activeDescendant,
+  onQueryChange,
+  onKeyDown,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  query: string;
+  listId: string;
+  activeDescendant?: string;
+  onQueryChange: (value: string) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+      <RiSearchLine
+        className="size-4 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
+      <input
+        ref={inputRef}
+        type="text"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="Search prompts..."
+        className={cn(
+          'min-w-0 flex-1 bg-transparent text-[15px] outline-none',
+          'placeholder:text-muted-foreground',
+        )}
+        aria-autocomplete="list"
+        aria-controls={listId}
+        aria-activedescendant={activeDescendant}
+        autoComplete="off"
+        spellCheck={false}
+      />
+    </div>
+  );
+}
+
+function ResultList({
+  listRef,
+  listId,
+  signedOut,
+  loading,
+  loadError,
+  folderNotFound,
+  prompts,
+  selectedIndex,
+  hasMore,
+  loadingMore,
+  onHover,
+  onSelect,
+  onLoadMore,
+}: {
+  listRef: RefObject<HTMLDivElement | null>;
+  listId: string;
+  signedOut: boolean;
+  loading: boolean;
+  loadError: string | null;
+  folderNotFound: boolean;
+  prompts: PromptDto[];
+  selectedIndex: number;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onHover: (index: number) => void;
+  onSelect: (prompt: PromptDto) => void;
+  onLoadMore: () => void;
+}) {
+  let body: ReactNode;
+  if (signedOut) {
+    body = (
+      <EmptyMessage
+        title="Sign in required"
+        detail="Open the Cue Q extension popup and sign in to search prompts."
+      />
+    );
+  } else if (loading) {
+    body = <EmptyMessage title="Loading prompts…" />;
+  } else if (loadError) {
+    body = <EmptyMessage title="Couldn't load prompts" detail={loadError} />;
+  } else if (folderNotFound) {
+    body = <EmptyMessage title="No matching folder" />;
+  } else if (prompts.length === 0) {
+    body = (
+      <EmptyMessage title="No prompts found" detail="Try a different search." />
+    );
+  } else {
+    body = (
+      <>
+        {prompts.map((prompt, index) => (
+          <ResultRow
+            key={prompt.id}
+            id={`${listId}-item-${index}`}
+            index={index}
+            selected={index === selectedIndex}
+            prompt={prompt}
+            onHover={() => onHover(index)}
+            onSelect={() => onSelect(prompt)}
+          />
+        ))}
+        {hasMore ? (
+          <div className="px-3 py-2">
+            <button
+              type="button"
+              className="w-full rounded-md px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-muted/60"
+              disabled={loadingMore}
+              onClick={onLoadMore}
+            >
+              {loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <div
+      ref={listRef}
+      id={listId}
+      role="listbox"
+      className="min-h-0 flex-1 overflow-y-auto py-1"
+    >
+      {body}
+    </div>
+  );
+}
+
+function PaletteFooter() {
+  return (
+    <div className="flex gap-4 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+      <span>
+        <kbd className="font-sans">↑↓</kbd> Navigate
+      </span>
+      <span>
+        <kbd className="font-sans">↵</kbd> Insert
+      </span>
+      <span>
+        <kbd className="font-sans">Esc</kbd> Close
+      </span>
     </div>
   );
 }
@@ -426,7 +510,7 @@ function ResultRow({
   onHover: () => void;
   onSelect: () => void;
 }) {
-  const path = prompt.folderName ?? 'Unfiled';
+  const description = prompt.content ? previewText(prompt.content) : '';
 
   return (
     <button
@@ -436,34 +520,31 @@ function ResultRow({
       role="option"
       aria-selected={selected}
       className={cn(
-        'flex w-full flex-col gap-0.5 px-3 py-2 text-left',
+        'flex w-full flex-col gap-0.5 px-3 py-1.5 text-left',
         selected ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60',
       )}
       onMouseEnter={onHover}
       onClick={onSelect}
     >
-      <span className="flex items-baseline gap-1.5">
-        <span className="text-muted-foreground" aria-hidden>
-          ▸
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          {prompt.title}
         </span>
-        <span className="truncate text-sm font-medium">{prompt.title}</span>
+        <Badge
+          variant="secondary"
+          className="h-4 shrink-0 px-1.5 text-[10px] font-medium"
+        >
+          {prompt.folderName ?? 'Unfiled'}
+        </Badge>
       </span>
-      <span
-        className={cn(
-          'pl-4 text-xs',
-          selected ? 'text-accent-foreground/70' : 'text-muted-foreground',
-        )}
-      >
-        {path}
-      </span>
-      {prompt.content ? (
+      {description ? (
         <span
           className={cn(
-            'pl-4 truncate text-xs',
+            'truncate text-xs',
             selected ? 'text-accent-foreground/55' : 'text-muted-foreground/80',
           )}
         >
-          {previewText(prompt.content)}
+          {description}
         </span>
       ) : null}
     </button>

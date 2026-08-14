@@ -32,25 +32,18 @@ export function PromptForm({
   defaultFolderId,
   onSaved,
 }: PromptFormProps) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [folderId, setFolderId] = useState(NONE_FOLDER);
-  const [isShared, setIsShared] = useState(false);
+  const isEdit = Boolean(prompt);
+  const [title, setTitle] = useState(prompt?.title ?? '');
+  const [content, setContent] = useState(prompt?.content ?? '');
+  const [folderId, setFolderId] = useState(
+    prompt ? (prompt.folderId ?? NONE_FOLDER) : (defaultFolderId ?? NONE_FOLDER),
+  );
+  const [isShared, setIsShared] = useState(prompt?.isShared ?? false);
   const [folders, setFolders] = useState<FolderDto[]>(foldersProp);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isEdit = Boolean(prompt);
 
   useEffect(() => {
-    if (!open) return;
-
-    setTitle(prompt?.title ?? '');
-    setContent(prompt?.content ?? '');
-    setFolderId(prompt?.folderId ?? defaultFolderId ?? NONE_FOLDER);
-    setIsShared(prompt?.isShared ?? false);
-    setFolders(foldersProp);
-    setError(null);
-
     let cancelled = false;
     void fetchAllFolders()
       .then((next) => {
@@ -59,11 +52,10 @@ export function PromptForm({
       .catch(() => {
         /* keep prop/fallback list */
       });
-
     return () => {
       cancelled = true;
     };
-  }, [open, prompt, defaultFolderId, foldersProp]);
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -119,17 +111,17 @@ export function PromptForm({
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            form="prompt-form"
-            disabled={pending}
-          >
+          <Button type="submit" form="prompt-form" disabled={pending}>
             {pending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
           </Button>
         </>
       }
     >
-      <form id="prompt-form" className="space-y-3" onSubmit={(e) => void handleSubmit(e)}>
+      <form
+        id="prompt-form"
+        className="space-y-3"
+        onSubmit={(e) => void handleSubmit(e)}
+      >
         {error ? (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {error}

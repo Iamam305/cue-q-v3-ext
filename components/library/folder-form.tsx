@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -22,19 +22,11 @@ export function FolderForm({
   folder,
   onSaved,
 }: FolderFormProps) {
-  const [name, setName] = useState('');
-  const [isShared, setIsShared] = useState(false);
+  const isEdit = Boolean(folder);
+  const [name, setName] = useState(folder?.name ?? '');
+  const [isShared, setIsShared] = useState(folder?.isShared ?? false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isEdit = Boolean(folder);
-
-  useEffect(() => {
-    if (open) {
-      setName(folder?.name ?? '');
-      setIsShared(folder?.isShared ?? false);
-      setError(null);
-    }
-  }, [open, folder]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();

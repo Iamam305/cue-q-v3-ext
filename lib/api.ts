@@ -57,6 +57,18 @@ export type MeResponse = {
   };
 };
 
+function toQuery(
+  params: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(key, value === null ? 'null' : String(value));
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
+
 async function parseJson<T>(res: Response): Promise<T> {
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) {
@@ -106,18 +118,13 @@ export async function fetchFolders(input?: {
   limit?: number;
   offset?: number;
 }): Promise<PaginatedFolders> {
-  const params = new URLSearchParams();
-  if (input?.q?.trim()) {
-    params.set('q', input.q.trim());
-  }
-  if (input?.limit !== undefined) {
-    params.set('limit', String(input.limit));
-  }
-  if (input?.offset !== undefined) {
-    params.set('offset', String(input.offset));
-  }
-  const qs = params.toString();
-  const res = await apiFetch(`/api/folders${qs ? `?${qs}` : ''}`);
+  const res = await apiFetch(
+    `/api/folders${toQuery({
+      q: input?.q?.trim() || undefined,
+      limit: input?.limit,
+      offset: input?.offset,
+    })}`,
+  );
   return parseJson<PaginatedFolders>(res);
 }
 
@@ -172,28 +179,15 @@ export async function fetchPrompts(input?: {
   limit?: number;
   offset?: number;
 }): Promise<PaginatedPrompts> {
-  const params = new URLSearchParams();
-  if (input?.q?.trim()) {
-    params.set('q', input.q.trim());
-  }
-  if (input?.folderId === null) {
-    params.set('folderId', 'null');
-  } else if (typeof input?.folderId === 'string') {
-    params.set('folderId', input.folderId);
-  }
-  if (input?.shared === true) {
-    params.set('shared', 'true');
-  } else if (input?.shared === false) {
-    params.set('shared', 'false');
-  }
-  if (input?.limit !== undefined) {
-    params.set('limit', String(input.limit));
-  }
-  if (input?.offset !== undefined) {
-    params.set('offset', String(input.offset));
-  }
-  const qs = params.toString();
-  const res = await apiFetch(`/api/prompts${qs ? `?${qs}` : ''}`);
+  const res = await apiFetch(
+    `/api/prompts${toQuery({
+      q: input?.q?.trim() || undefined,
+      folderId: input?.folderId,
+      shared: input?.shared,
+      limit: input?.limit,
+      offset: input?.offset,
+    })}`,
+  );
   return parseJson<PaginatedPrompts>(res);
 }
 
@@ -202,19 +196,12 @@ export async function fetchQuickSearchPrompts(input?: {
   limit?: number;
   offset?: number;
 }): Promise<QuickSearchPrompts> {
-  const params = new URLSearchParams();
-  if (input?.q !== undefined) {
-    params.set('q', input.q);
-  }
-  if (input?.limit !== undefined) {
-    params.set('limit', String(input.limit));
-  }
-  if (input?.offset !== undefined) {
-    params.set('offset', String(input.offset));
-  }
-  const qs = params.toString();
   const res = await apiFetch(
-    `/api/prompts/quick-search${qs ? `?${qs}` : ''}`,
+    `/api/prompts/quick-search${toQuery({
+      q: input?.q,
+      limit: input?.limit,
+      offset: input?.offset,
+    })}`,
   );
   return parseJson<QuickSearchPrompts>(res);
 }

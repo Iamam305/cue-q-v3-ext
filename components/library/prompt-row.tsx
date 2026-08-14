@@ -46,10 +46,6 @@ export function PromptRow({
     }
   }
 
-  function stop(event: MouseEvent) {
-    event.stopPropagation();
-  }
-
   return (
     <li className="border-b border-border/60 last:border-b-0">
       <div
@@ -92,58 +88,15 @@ export function PromptRow({
           </span>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-1" onClick={stop}>
-          <Button
-            size="xs"
-            variant={copied ? 'secondary' : 'default'}
-            onClick={(e) => void handleCopy(e)}
-            aria-label="Copy prompt"
-          >
-            {copied ? (
-              <RiCheckLine className="size-3.5" />
-            ) : (
-              <RiFileCopyLine className="size-3.5" />
-            )}
-            {copied ? 'Copied' : 'Copy'}
-          </Button>
-          {isOwner ? (
-            <>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Edit prompt"
-                onClick={(e) => {
-                  stop(e);
-                  onEdit();
-                }}
-              >
-                <RiEditLine className="size-3.5" />
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label={prompt.isShared ? 'Make private' : 'Share prompt'}
-                onClick={(e) => {
-                  stop(e);
-                  onShare();
-                }}
-              >
-                <RiShareLine className="size-3.5" />
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="Delete prompt"
-                onClick={(e) => {
-                  stop(e);
-                  onDelete();
-                }}
-              >
-                <RiDeleteBinLine className="size-3.5" />
-              </Button>
-            </>
-          ) : null}
-        </div>
+        <RowActions
+          copied={copied}
+          isOwner={isOwner}
+          isShared={prompt.isShared}
+          onCopy={(e) => void handleCopy(e)}
+          onEdit={onEdit}
+          onShare={onShare}
+          onDelete={onDelete}
+        />
 
         {expanded ? (
           <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
@@ -152,5 +105,82 @@ export function PromptRow({
         ) : null}
       </div>
     </li>
+  );
+}
+
+function RowActions({
+  copied,
+  isOwner,
+  isShared,
+  onCopy,
+  onEdit,
+  onShare,
+  onDelete,
+}: {
+  copied: boolean;
+  isOwner: boolean;
+  isShared: boolean;
+  onCopy: (event: MouseEvent) => void;
+  onEdit: () => void;
+  onShare: () => void;
+  onDelete: () => void;
+}) {
+  function stop(event: MouseEvent) {
+    event.stopPropagation();
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1" onClick={stop}>
+      <Button
+        size="xs"
+        variant={copied ? 'secondary' : 'default'}
+        onClick={onCopy}
+        aria-label="Copy prompt"
+      >
+        {copied ? (
+          <RiCheckLine className="size-3.5" />
+        ) : (
+          <RiFileCopyLine className="size-3.5" />
+        )}
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+      {isOwner ? (
+        <>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Edit prompt"
+            onClick={(e) => {
+              stop(e);
+              onEdit();
+            }}
+          >
+            <RiEditLine className="size-3.5" />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={isShared ? 'Make private' : 'Share prompt'}
+            onClick={(e) => {
+              stop(e);
+              onShare();
+            }}
+          >
+            <RiShareLine className="size-3.5" />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Delete prompt"
+            onClick={(e) => {
+              stop(e);
+              onDelete();
+            }}
+          >
+            <RiDeleteBinLine className="size-3.5" />
+          </Button>
+        </>
+      ) : null}
+    </div>
   );
 }

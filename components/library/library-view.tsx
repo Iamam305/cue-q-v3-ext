@@ -1,5 +1,5 @@
 import { RiAddLine, RiSearchLine } from '@remixicon/react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfirmDialog } from '@/components/library/confirm-dialog';
 import { FolderForm } from '@/components/library/folder-form';
 import {
@@ -38,12 +38,32 @@ type LibraryViewProps = {
   onUnauthorized: () => void;
 };
 
+function promptListParams(
+  search: string,
+  folderFilter: FolderFilter,
+  sharedFilter: SharedFilter,
+) {
+  return {
+    q: search || undefined,
+    folderId:
+      folderFilter === 'all'
+        ? undefined
+        : folderFilter === 'none'
+          ? null
+          : folderFilter,
+    shared: sharedFilter === 'all' ? undefined : sharedFilter === 'shared',
+  };
+}
+
 export function LibraryView({
   user,
   onSignOut,
   onUnauthorized,
 }: LibraryViewProps) {
   const currentUserId = user.id;
+  const foldersRequestRef = useRef(0);
+  const promptsRequestRef = useRef(0);
+
   const [folders, setFolders] = useState<FolderDto[]>([]);
   const [prompts, setPrompts] = useState<PromptDto[]>([]);
   const [foldersHasMore, setFoldersHasMore] = useState(false);
@@ -83,124 +103,79 @@ export function LibraryView({
   );
 
   const loadFolders = useCallback(
-    async (opts?: { append?: boolean }) => {
-      const append = opts?.append ?? false;
+    async (offset = 0) => {
+      const requestId =
+        offset > 0 ? foldersRequestRef.current : ++foldersRequestRef.current;
       try {
-        if (append) setLoadingFoldersMore(true);
-        const offset = append ? folders.length : 0;
+        if (offset > 0) setLoadingFoldersMore(true);
         const page = await fetchFolders({
           limit: DEFAULT_PAGE_LIMIT,
           offset,
         });
+        if (requestId !== foldersRequestRef.current) return;
         setFolders((prev) =>
-          append ? [...prev, ...page.folders] : page.folders,
+          offset > 0 ? [...prev, ...page.folders] : page.folders,
         );
         setFoldersHasMore(page.pagination.hasMore);
       } catch (err) {
+        if (requestId !== foldersRequestRef.current) return;
         const message =
           err instanceof Error ? err.message : 'Failed to load folders';
         if (!handleUnauthorized(message)) {
           setError(message);
         }
       } finally {
-        if (append) setLoadingFoldersMore(false);
+        if (offset > 0 && requestId === foldersRequestRef.current) {
+          setLoadingFoldersMore(false);
+        }
       }
     },
-    [folders.length, handleUnauthorized],
+    [handleUnauthorized],
   );
 
   const loadPrompts = useCallback(
-    async (opts?: { append?: boolean }) => {
-      const append = opts?.append ?? false;
+    async (offset = 0) => {
+      const requestId =
+        offset > 0 ? promptsRequestRef.current : ++promptsRequestRef.current;
       try {
-        if (append) setLoadingPromptsMore(true);
-        const folderId =
-          folderFilter === 'all'
-            ? undefined
-            : folderFilter === 'none'
-              ? null
-              : folderFilter;
-
-        const shared =
-          sharedFilter === 'all' ? undefined : sharedFilter === 'shared';
-
-        const offset = append ? prompts.length : 0;
+        if (offset > 0) setLoadingPromptsMore(true);
         const page = await fetchPrompts({
-          q: debouncedSearch || undefined,
-          folderId,
-          shared,
+          ...promptListParams(debouncedSearch, folderFilter, sharedFilter),
           limit: DEFAULT_PAGE_LIMIT,
           offset,
         });
+        if (requestId !== promptsRequestRef.current) return;
         setPrompts((prev) =>
-          append ? [...prev, ...page.prompts] : page.prompts,
+          offset > 0 ? [...prev, ...page.prompts] : page.prompts,
         );
         setPromptsHasMore(page.pagination.hasMore);
       } catch (err) {
+        if (requestId !== promptsRequestRef.current) return;
         const message =
           err instanceof Error ? err.message : 'Failed to load prompts';
         if (!handleUnauthorized(message)) {
           setError(message);
         }
       } finally {
-        if (append) setLoadingPromptsMore(false);
+        if (offset > 0 && requestId === promptsRequestRef.current) {
+          setLoadingPromptsMore(false);
+        }
       }
     },
-    [
-      debouncedSearch,
-      folderFilter,
-      sharedFilter,
-      prompts.length,
-      handleUnauthorized,
-    ],
+    [debouncedSearch, folderFilter, sharedFilter, handleUnauthorized],
   );
 
   useEffect(() => {
     let cancelled = false;
-    async function init() {
-      setLoading(true);
-      setError(null);
-      try {
-        const folderId =
-          folderFilter === 'all'
-            ? undefined
-            : folderFilter === 'none'
-              ? null
-              : folderFilter;
-        const shared =
-          sharedFilter === 'all' ? undefined : sharedFilter === 'shared';
-
-        const [folderPage, promptPage] = await Promise.all([
-          fetchFolders({ limit: DEFAULT_PAGE_LIMIT, offset: 0 }),
-          fetchPrompts({
-            q: debouncedSearch || undefined,
-            folderId,
-            shared,
-            limit: DEFAULT_PAGE_LIMIT,
-            offset: 0,
-          }),
-        ]);
-        if (cancelled) return;
-        setFolders(folderPage.folders);
-        setFoldersHasMore(folderPage.pagination.hasMore);
-        setPrompts(promptPage.prompts);
-        setPromptsHasMore(promptPage.pagination.hasMore);
-      } catch (err) {
-        if (cancelled) return;
-        const message =
-          err instanceof Error ? err.message : 'Failed to load library';
-        if (!handleUnauthorized(message)) {
-          setError(message);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    void init();
+    setLoading(true);
+    setError(null);
+    void Promise.all([loadFolders(0), loadPrompts(0)]).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, folderFilter, sharedFilter, handleUnauthorized]);
+  }, [loadFolders, loadPrompts]);
 
   function openCreatePrompt() {
     setEditingPrompt(null);
@@ -256,7 +231,7 @@ export function LibraryView({
       );
       setStatus(updated.isShared ? 'Folder shared' : 'Folder is private');
       setError(null);
-      await loadPrompts();
+      await loadPrompts(0);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Update failed';
       if (!handleUnauthorized(message)) setError(message);
@@ -278,7 +253,7 @@ export function LibraryView({
         if (folderFilter === folder.id) {
           setFolderFilter('all');
         }
-        await Promise.all([loadFolders(), loadPrompts()]);
+        await Promise.all([loadFolders(0), loadPrompts(0)]);
       } else {
         const item = confirm.prompt;
         if (item.ownerId !== currentUserId) {
@@ -305,25 +280,11 @@ export function LibraryView({
 
   return (
     <div className="cue-atmosphere relative flex h-full flex-col">
-      <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border/70 px-3 py-2.5">
-        <div className="min-w-0">
-          <h1 className="font-heading text-lg font-semibold tracking-tight">
-            Cue Q
-          </h1>
-          <p className="truncate text-xs text-muted-foreground">
-            {user.name || user.email}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button size="sm" onClick={openCreatePrompt}>
-            <RiAddLine className="size-3.5" />
-            New
-          </Button>
-          <Button size="sm" variant="outline" onClick={onSignOut}>
-            Sign out
-          </Button>
-        </div>
-      </header>
+      <LibraryHeader
+        user={user}
+        onCreatePrompt={openCreatePrompt}
+        onSignOut={onSignOut}
+      />
 
       <div className="flex min-h-0 flex-1">
         {loading ? (
@@ -340,7 +301,7 @@ export function LibraryView({
             currentUserId={currentUserId}
             hasMore={foldersHasMore}
             loadingMore={loadingFoldersMore}
-            onLoadMore={() => void loadFolders({ append: true })}
+            onLoadMore={() => void loadFolders(folders.length)}
             onChange={setFolderFilter}
             onCreate={openCreateFolder}
             onEdit={openEditFolder}
@@ -350,118 +311,62 @@ export function LibraryView({
         )}
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <div className="shrink-0 space-y-2 border-b border-border/50 px-3 py-2.5">
-            <div className="flex gap-2">
-              <div className="relative min-w-0 flex-1">
-                <RiSearchLine className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search prompts…"
-                  className="h-8 pl-8 text-sm"
-                />
-              </div>
-              <Select
-                value={sharedFilter}
-                onChange={(e) =>
-                  setSharedFilter(e.target.value as SharedFilter)
-                }
-                className="h-8 w-[7.5rem] shrink-0 text-xs"
-                aria-label="Visibility filter"
-              >
-                <option value="all">All visibility</option>
-                <option value="shared">Shared</option>
-                <option value="mine">Mine only</option>
-              </Select>
-            </div>
-            {error ? (
-              <p className="text-xs text-destructive">{error}</p>
-            ) : status ? (
-              <p className="text-xs text-muted-foreground">{status}</p>
-            ) : null}
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
-            {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-16 w-full rounded-lg" />
-                <Skeleton className="h-16 w-full rounded-lg" />
-                <Skeleton className="h-16 w-full rounded-lg" />
-              </div>
-            ) : prompts.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
-                <p className="text-sm font-medium">No prompts yet</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Create a prompt or adjust your filters.
-                </p>
-                <Button className="mt-4" size="sm" onClick={openCreatePrompt}>
-                  <RiAddLine className="size-3.5" />
-                  Create prompt
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <ul className="overflow-hidden rounded-xl border border-border/70 bg-card/60 ring-1 ring-foreground/5">
-                  {prompts.map((item) => (
-                    <PromptRow
-                      key={item.id}
-                      prompt={item}
-                      expanded={expandedId === item.id}
-                      isOwner={item.ownerId === currentUserId}
-                      onToggle={() =>
-                        setExpandedId((prev) =>
-                          prev === item.id ? null : item.id,
-                        )
-                      }
-                      onEdit={() => openEditPrompt(item)}
-                      onShare={() => void handleTogglePromptShare(item)}
-                      onDelete={() =>
-                        setConfirm({ type: 'prompt', prompt: item })
-                      }
-                    />
-                  ))}
-                </ul>
-                {promptsHasMore ? (
-                  <div className="flex justify-center pt-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={loadingPromptsMore}
-                      onClick={() => void loadPrompts({ append: true })}
-                    >
-                      {loadingPromptsMore ? 'Loading…' : 'Load more'}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
+          <SearchToolbar
+            search={search}
+            sharedFilter={sharedFilter}
+            error={error}
+            status={status}
+            onSearchChange={setSearch}
+            onSharedFilterChange={setSharedFilter}
+          />
+          <PromptList
+            loading={loading}
+            prompts={prompts}
+            expandedId={expandedId}
+            currentUserId={currentUserId}
+            hasMore={promptsHasMore}
+            loadingMore={loadingPromptsMore}
+            onCreate={openCreatePrompt}
+            onToggle={(id) =>
+              setExpandedId((prev) => (prev === id ? null : id))
+            }
+            onEdit={openEditPrompt}
+            onShare={(item) => void handleTogglePromptShare(item)}
+            onDelete={(item) => setConfirm({ type: 'prompt', prompt: item })}
+            onLoadMore={() => void loadPrompts(prompts.length)}
+          />
         </section>
       </div>
 
-      <PromptForm
-        open={promptFormOpen}
-        onOpenChange={setPromptFormOpen}
-        prompt={editingPrompt}
-        folders={folders}
-        defaultFolderId={
-          editingPrompt ? editingPrompt.folderId : defaultFolderId
-        }
-        onSaved={async () => {
-          setStatus(editingPrompt ? 'Prompt updated' : 'Prompt created');
-          await loadPrompts();
-        }}
-      />
+      {promptFormOpen ? (
+        <PromptForm
+          key={editingPrompt?.id ?? 'new'}
+          open
+          onOpenChange={setPromptFormOpen}
+          prompt={editingPrompt}
+          folders={folders}
+          defaultFolderId={
+            editingPrompt ? editingPrompt.folderId : defaultFolderId
+          }
+          onSaved={async () => {
+            setStatus(editingPrompt ? 'Prompt updated' : 'Prompt created');
+            await loadPrompts(0);
+          }}
+        />
+      ) : null}
 
-      <FolderForm
-        open={folderFormOpen}
-        onOpenChange={setFolderFormOpen}
-        folder={editingFolder}
-        onSaved={async () => {
-          setStatus(editingFolder ? 'Folder updated' : 'Folder created');
-          await Promise.all([loadFolders(), loadPrompts()]);
-        }}
-      />
+      {folderFormOpen ? (
+        <FolderForm
+          key={editingFolder?.id ?? 'new'}
+          open
+          onOpenChange={setFolderFormOpen}
+          folder={editingFolder}
+          onSaved={async () => {
+            setStatus(editingFolder ? 'Folder updated' : 'Folder created');
+            await Promise.all([loadFolders(0), loadPrompts(0)]);
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={confirm !== null}
@@ -481,6 +386,165 @@ export function LibraryView({
         }}
         onConfirm={() => void confirmDelete()}
       />
+    </div>
+  );
+}
+
+function LibraryHeader({
+  user,
+  onCreatePrompt,
+  onSignOut,
+}: {
+  user: CueqUser;
+  onCreatePrompt: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border/70 px-3 py-2.5">
+      <div className="min-w-0">
+        <h1 className="font-heading text-lg font-semibold tracking-tight">
+          Cue Q
+        </h1>
+        <p className="truncate text-xs text-muted-foreground">
+          {user.name || user.email}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Button size="sm" onClick={onCreatePrompt}>
+          <RiAddLine className="size-3.5" />
+          New
+        </Button>
+        <Button size="sm" variant="outline" onClick={onSignOut}>
+          Sign out
+        </Button>
+      </div>
+    </header>
+  );
+}
+
+function SearchToolbar({
+  search,
+  sharedFilter,
+  error,
+  status,
+  onSearchChange,
+  onSharedFilterChange,
+}: {
+  search: string;
+  sharedFilter: SharedFilter;
+  error: string | null;
+  status: string | null;
+  onSearchChange: (value: string) => void;
+  onSharedFilterChange: (value: SharedFilter) => void;
+}) {
+  return (
+    <div className="shrink-0 space-y-2 border-b border-border/50 px-3 py-2.5">
+      <div className="flex gap-2">
+        <div className="relative min-w-0 flex-1">
+          <RiSearchLine className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search prompts…"
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+        <Select
+          value={sharedFilter}
+          onChange={(e) => onSharedFilterChange(e.target.value as SharedFilter)}
+          className="h-8 w-[7.5rem] shrink-0 text-xs"
+          aria-label="Visibility filter"
+        >
+          <option value="all">All visibility</option>
+          <option value="shared">Shared</option>
+          <option value="mine">Mine only</option>
+        </Select>
+      </div>
+      {error ? (
+        <p className="text-xs text-destructive">{error}</p>
+      ) : status ? (
+        <p className="text-xs text-muted-foreground">{status}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function PromptList({
+  loading,
+  prompts,
+  expandedId,
+  currentUserId,
+  hasMore,
+  loadingMore,
+  onCreate,
+  onToggle,
+  onEdit,
+  onShare,
+  onDelete,
+  onLoadMore,
+}: {
+  loading: boolean;
+  prompts: PromptDto[];
+  expandedId: string | null;
+  currentUserId: string;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onCreate: () => void;
+  onToggle: (id: string) => void;
+  onEdit: (prompt: PromptDto) => void;
+  onShare: (prompt: PromptDto) => void;
+  onDelete: (prompt: PromptDto) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-16 w-full rounded-lg" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+          <Skeleton className="h-16 w-full rounded-lg" />
+        </div>
+      ) : prompts.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-4 py-10 text-center">
+          <p className="text-sm font-medium">No prompts yet</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Create a prompt or adjust your filters.
+          </p>
+          <Button className="mt-4" size="sm" onClick={onCreate}>
+            <RiAddLine className="size-3.5" />
+            Create prompt
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <ul className="overflow-hidden rounded-xl border border-border/70 bg-card/60 ring-1 ring-foreground/5">
+            {prompts.map((item) => (
+              <PromptRow
+                key={item.id}
+                prompt={item}
+                expanded={expandedId === item.id}
+                isOwner={item.ownerId === currentUserId}
+                onToggle={() => onToggle(item.id)}
+                onEdit={() => onEdit(item)}
+                onShare={() => onShare(item)}
+                onDelete={() => onDelete(item)}
+              />
+            ))}
+          </ul>
+          {hasMore ? (
+            <div className="flex justify-center pt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loadingMore}
+                onClick={onLoadMore}
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
