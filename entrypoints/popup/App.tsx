@@ -1,77 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LibraryView } from '@/components/library/library-view';
+import { resetSession } from '@/components/providers/query-provider';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getMe } from '@/lib/api';
 import { loginWithChromeIdentity, logout } from '@/lib/auth';
-import { type CueqUser, getUser } from '@/lib/storage';
+import { getUser } from '@/lib/storage';
 
-type AuthState = 'loading' | 'signed_out' | 'signed_in';
+async function fetchSession() {
+  const stored = await getUser();
+  if (!stored) return null;
+  const me = await getMe();
+  return me.user;
+}
 
 export default function App() {
-  const [authState, setAuthState] = useState<AuthState>('loading');
-  const [user, setUser] = useState<CueqUser | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
+  const queryClient = useQueryClient();
+  const meQuery = useQuery({
+    queryKey: ['me'],
+    queryFn: fetchSession,
+    retry: false,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function bootstrap() {
-      setError(null);
-      try {
-        const stored = await getUser();
-        if (!stored) {
-          if (!cancelled) {
-            setAuthState('signed_out');
-            setUser(null);
-          }
-          return;
-        }
-
-        const me = await getMe();
-        if (cancelled) return;
-        setUser(me.user);
-        setAuthState('signed_in');
-      } catch {
-        if (cancelled) return;
-        setUser(null);
-        setAuthState('signed_out');
-      }
-    }
-
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleSignIn() {
-    setSigningIn(true);
-    setError(null);
-    try {
-      const nextUser = await loginWithChromeIdentity();
-      setUser(nextUser);
-      setAuthState('signed_in');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign-in failed');
-    } finally {
-      setSigningIn(false);
-    }
-  }
+  const signIn = useMutation({
+    mutationFn: loginWithChromeIdentity,
+    onSuccess: (user) => {
+      queryClient.setQueryData(['me'], user);
+    },
+  });
 
   async function handleSignOut() {
     await logout();
-    setUser(null);
-    setAuthState('signed_out');
+    resetSession(queryClient);
   }
 
   function handleUnauthorized() {
-    setUser(null);
-    setAuthState('signed_out');
+    resetSession(queryClient);
   }
 
-  if (authState === 'loading') {
+  if (meQuery.isPending) {
     return (
       <div className="cue-atmosphere flex h-full flex-col gap-4 p-4">
         <Skeleton className="h-8 w-28" />
@@ -82,7 +49,15 @@ export default function App() {
     );
   }
 
-  if (authState === 'signed_out' || !user) {
+  const user = meQuery.data;
+  if (!user) {
+    const error =
+      signIn.error instanceof Error
+        ? signIn.error.message
+        : signIn.error
+          ? 'Sign-in failed'
+          : null;
+
     return (
       <div className="cue-atmosphere flex h-full flex-col items-center justify-center px-6 py-8 text-center">
         <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">
@@ -98,10 +73,10 @@ export default function App() {
         ) : null}
         <Button
           className="mt-6 w-full max-w-56"
-          disabled={signingIn}
-          onClick={() => void handleSignIn()}
+          disabled={signIn.isPending}
+          onClick={() => signIn.mutate()}
         >
-          {signingIn ? 'Signing in…' : 'Sign in'}
+          {signIn.isPending ? 'Signing in…' : 'Sign in'}
         </Button>
       </div>
     );

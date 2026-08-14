@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
+import { QueryProvider } from '@/components/providers/query-provider';
 import { PromptPalette } from '@/components/quick-search/prompt-palette';
 import { injectNotoSansFonts } from '@/lib/inject-fonts';
 import '@/assets/content.css';
@@ -66,7 +67,9 @@ export default defineContentScript({
         const root = ReactDOM.createRoot(app);
         root.render(
           <React.StrictMode>
-            <QuickSearchApp />
+            <QueryProvider>
+              <QuickSearchApp />
+            </QueryProvider>
           </React.StrictMode>,
         );
         return root;

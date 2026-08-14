@@ -1,4 +1,5 @@
 import { RiSearchLine } from '@remixicon/react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -7,6 +8,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -19,7 +21,7 @@ import {
 } from '@/lib/api';
 import { shouldExitFolderOnBackspace } from '@/lib/quick-search/search';
 import { getToken } from '@/lib/storage';
-import { cn } from '@/lib/utils';
+import { cn, isUnauthorized } from '@/lib/utils';
 
 const SEARCH_DEBOUNCE_MS = 180;
 
@@ -38,106 +40,73 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const requestIdRef = useRef(0);
-  const loadedQueryRef = useRef('');
   const wasOpenRef = useRef(false);
 
   const [query, setQuery] = useState('');
-  const [prompts, setPrompts] = useState<PromptDto[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [folderNotFound, setFolderNotFound] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [signedOut, setSignedOut] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [insertError, setInsertError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
-
-  const resetTransient = useCallback(() => {
-    setQuery('');
-    setInsertError(null);
-    setSelectedIndex(0);
-    setPrompts([]);
-    setHasMore(false);
-    setFolderNotFound(false);
-    setLoadError(null);
-  }, []);
-
-  const loadPage = useCallback(
-    async (searchQuery: string, offset: number, append: boolean) => {
-      const requestId = ++requestIdRef.current;
-      if (append) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-        setSelectedIndex(0);
-      }
-      setLoadError(null);
-      setSignedOut(false);
-
-      try {
-        const token = await getToken();
-        if (!token) {
-          if (requestId !== requestIdRef.current) return;
-          setSignedOut(true);
-          setPrompts([]);
-          setHasMore(false);
-          setFolderNotFound(false);
-          return;
-        }
-
-        const page = await fetchQuickSearchPrompts({
-          q: searchQuery,
-          limit: DEFAULT_PAGE_LIMIT,
-          offset,
-        });
-
-        if (requestId !== requestIdRef.current) return;
-
-        loadedQueryRef.current = searchQuery;
-        setPrompts((prev) =>
-          append ? [...prev, ...page.prompts] : page.prompts,
-        );
-        setHasMore(page.pagination.hasMore);
-        setFolderNotFound(page.folderNotFound === true);
-      } catch (err) {
-        if (requestId !== requestIdRef.current) return;
-        const message =
-          err instanceof Error ? err.message : 'Failed to load prompts';
-        if (message === 'Unauthorized') {
-          setSignedOut(true);
-        } else {
-          setLoadError(message);
-        }
-        if (!append) {
-          setPrompts([]);
-          setHasMore(false);
-          setFolderNotFound(false);
-        }
-      } finally {
-        if (requestId === requestIdRef.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!open) {
       wasOpenRef.current = false;
-      resetTransient();
+      setQuery('');
+      setDebouncedQuery('');
+      setInsertError(null);
+      setSelectedIndex(0);
       return;
     }
 
     const delay = wasOpenRef.current ? SEARCH_DEBOUNCE_MS : 0;
     wasOpenRef.current = true;
     const timer = window.setTimeout(() => {
-      void loadPage(query, 0, false);
+      setDebouncedQuery(query);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [open, query, loadPage, resetTransient]);
+  }, [open, query]);
+
+  const searchQuery = useInfiniteQuery({
+    queryKey: ['quick-search', debouncedQuery],
+    enabled: open,
+    queryFn: async ({ pageParam }) => {
+      const token = await getToken();
+      if (!token) {
+        throw new Error('Unauthorized');
+      }
+      return fetchQuickSearchPrompts({
+        q: debouncedQuery,
+        limit: DEFAULT_PAGE_LIMIT,
+        offset: pageParam,
+      });
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasMore
+        ? lastPage.pagination.offset + lastPage.pagination.limit
+        : undefined,
+  });
+
+  const prompts = useMemo(
+    () => searchQuery.data?.pages.flatMap((page) => page.prompts) ?? [],
+    [searchQuery.data],
+  );
+  const folderNotFound =
+    searchQuery.data?.pages.at(-1)?.folderNotFound === true;
+  const signedOut = isUnauthorized(searchQuery.error);
+  const loadError = signedOut
+    ? null
+    : searchQuery.error
+      ? searchQuery.error instanceof Error
+        ? searchQuery.error.message
+        : 'Failed to load prompts'
+      : null;
+  const loading =
+    searchQuery.isPending ||
+    (searchQuery.isFetching && !searchQuery.isFetchingNextPage);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [debouncedQuery]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -208,8 +177,8 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
   };
 
   const loadMore = () => {
-    if (loadingMore || !hasMore || loading) return;
-    void loadPage(loadedQueryRef.current, prompts.length, true);
+    if (searchQuery.isFetchingNextPage || !searchQuery.hasNextPage) return;
+    void searchQuery.fetchNextPage();
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -307,13 +276,13 @@ export function PromptPalette({ open, onClose }: PromptPaletteProps) {
           listRef={listRef}
           listId={listId}
           signedOut={signedOut}
-          loading={loading}
+          loading={loading && prompts.length === 0}
           loadError={loadError}
           folderNotFound={folderNotFound}
           prompts={prompts}
           selectedIndex={selectedIndex}
-          hasMore={hasMore}
-          loadingMore={loadingMore}
+          hasMore={Boolean(searchQuery.hasNextPage)}
+          loadingMore={searchQuery.isFetchingNextPage}
           onHover={setSelectedIndex}
           onSelect={insertPrompt}
           onLoadMore={loadMore}

@@ -1,4 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, type FormEvent } from 'react';
+import { resetSession } from '@/components/providers/query-provider';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -8,10 +10,10 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   createPromptApi,
   fetchAllFolders,
-  type FolderDto,
   type PromptDto,
   updatePromptApi,
 } from '@/lib/api';
+import { isUnauthorized } from '@/lib/utils';
 
 const NONE_FOLDER = '__none__';
 
@@ -19,19 +21,18 @@ type PromptFormProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   prompt?: PromptDto | null;
-  folders?: FolderDto[];
   defaultFolderId?: string | null;
-  onSaved: (prompt: PromptDto) => void;
+  onSaved: () => void;
 };
 
 export function PromptForm({
   open,
   onOpenChange,
   prompt,
-  folders: foldersProp = [],
   defaultFolderId,
   onSaved,
 }: PromptFormProps) {
+  const queryClient = useQueryClient();
   const isEdit = Boolean(prompt);
   const [title, setTitle] = useState(prompt?.title ?? '');
   const [content, setContent] = useState(prompt?.content ?? '');
@@ -39,25 +40,39 @@ export function PromptForm({
     prompt ? (prompt.folderId ?? NONE_FOLDER) : (defaultFolderId ?? NONE_FOLDER),
   );
   const [isShared, setIsShared] = useState(prompt?.isShared ?? false);
-  const [folders, setFolders] = useState<FolderDto[]>(foldersProp);
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetchAllFolders()
-      .then((next) => {
-        if (!cancelled) setFolders(next);
-      })
-      .catch(() => {
-        /* keep prop/fallback list */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const foldersQuery = useQuery({
+    queryKey: ['folders', 'all'],
+    queryFn: () => fetchAllFolders(),
+  });
+  const folders = foldersQuery.data ?? [];
 
-  async function handleSubmit(event: FormEvent) {
+  const savePrompt = useMutation({
+    mutationFn: (input: {
+      title: string;
+      content: string;
+      folderId: string | null;
+      isShared: boolean;
+    }) =>
+      isEdit && prompt
+        ? updatePromptApi(prompt.id, input)
+        : createPromptApi(input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      onSaved();
+      onOpenChange(false);
+    },
+    onError: (err) => {
+      if (isUnauthorized(err)) {
+        resetSession(queryClient);
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    },
+  });
+
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
@@ -69,31 +84,13 @@ export function PromptForm({
       return;
     }
 
-    const resolvedFolderId = folderId === NONE_FOLDER ? null : folderId;
-    setPending(true);
     setError(null);
-    try {
-      const saved =
-        isEdit && prompt
-          ? await updatePromptApi(prompt.id, {
-              title: trimmedTitle,
-              content,
-              folderId: resolvedFolderId,
-              isShared,
-            })
-          : await createPromptApi({
-              title: trimmedTitle,
-              content,
-              folderId: resolvedFolderId,
-              isShared,
-            });
-      onSaved(saved);
-      onOpenChange(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    } finally {
-      setPending(false);
-    }
+    savePrompt.mutate({
+      title: trimmedTitle,
+      content,
+      folderId: folderId === NONE_FOLDER ? null : folderId,
+      isShared,
+    });
   }
 
   return (
@@ -111,17 +108,17 @@ export function PromptForm({
           >
             Cancel
           </Button>
-          <Button type="submit" form="prompt-form" disabled={pending}>
-            {pending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+          <Button
+            type="submit"
+            form="prompt-form"
+            disabled={savePrompt.isPending}
+          >
+            {savePrompt.isPending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
           </Button>
         </>
       }
     >
-      <form
-        id="prompt-form"
-        className="space-y-3"
-        onSubmit={(e) => void handleSubmit(e)}
-      >
+      <form id="prompt-form" className="space-y-3" onSubmit={handleSubmit}>
         {error ? (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {error}

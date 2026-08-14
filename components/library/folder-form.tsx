@@ -1,4 +1,6 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
+import { resetSession } from '@/components/providers/query-provider';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -8,12 +10,13 @@ import {
   type FolderDto,
   updateFolderApi,
 } from '@/lib/api';
+import { isUnauthorized } from '@/lib/utils';
 
 type FolderFormProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   folder?: FolderDto | null;
-  onSaved: (folder: FolderDto) => void;
+  onSaved: () => void;
 };
 
 export function FolderForm({
@@ -22,13 +25,35 @@ export function FolderForm({
   folder,
   onSaved,
 }: FolderFormProps) {
+  const queryClient = useQueryClient();
   const isEdit = Boolean(folder);
   const [name, setName] = useState(folder?.name ?? '');
   const [isShared, setIsShared] = useState(folder?.isShared ?? false);
-  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(event: FormEvent) {
+  const saveFolder = useMutation({
+    mutationFn: (input: { name: string; isShared: boolean }) =>
+      isEdit && folder
+        ? updateFolderApi(folder.id, input)
+        : createFolderApi(input),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['folders'] }),
+        queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+      ]);
+      onSaved();
+      onOpenChange(false);
+    },
+    onError: (err) => {
+      if (isUnauthorized(err)) {
+        resetSession(queryClient);
+        return;
+      }
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    },
+  });
+
+  function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
@@ -36,20 +61,8 @@ export function FolderForm({
       return;
     }
 
-    setPending(true);
     setError(null);
-    try {
-      const saved =
-        isEdit && folder
-          ? await updateFolderApi(folder.id, { name: trimmed, isShared })
-          : await createFolderApi({ name: trimmed, isShared });
-      onSaved(saved);
-      onOpenChange(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
-    } finally {
-      setPending(false);
-    }
+    saveFolder.mutate({ name: trimmed, isShared });
   }
 
   return (
@@ -67,17 +80,17 @@ export function FolderForm({
           >
             Cancel
           </Button>
-          <Button type="submit" form="folder-form" disabled={pending}>
-            {pending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
+          <Button
+            type="submit"
+            form="folder-form"
+            disabled={saveFolder.isPending}
+          >
+            {saveFolder.isPending ? 'Saving…' : isEdit ? 'Save' : 'Create'}
           </Button>
         </>
       }
     >
-      <form
-        id="folder-form"
-        className="space-y-3"
-        onSubmit={(e) => void handleSubmit(e)}
-      >
+      <form id="folder-form" className="space-y-3" onSubmit={handleSubmit}>
         {error ? (
           <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             {error}

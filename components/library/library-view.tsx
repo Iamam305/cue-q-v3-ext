@@ -1,5 +1,11 @@
 import { RiAddLine, RiSearchLine } from '@remixicon/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
 import { ConfirmDialog } from '@/components/library/confirm-dialog';
 import { FolderForm } from '@/components/library/folder-form';
 import {
@@ -24,6 +30,7 @@ import {
   updatePromptApi,
 } from '@/lib/api';
 import type { CueqUser } from '@/lib/storage';
+import { isUnauthorized } from '@/lib/utils';
 
 type SharedFilter = 'all' | 'shared' | 'mine';
 
@@ -55,22 +62,18 @@ function promptListParams(
   };
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function LibraryView({
   user,
   onSignOut,
   onUnauthorized,
 }: LibraryViewProps) {
+  const queryClient = useQueryClient();
   const currentUserId = user.id;
-  const foldersRequestRef = useRef(0);
-  const promptsRequestRef = useRef(0);
 
-  const [folders, setFolders] = useState<FolderDto[]>([]);
-  const [prompts, setPrompts] = useState<PromptDto[]>([]);
-  const [foldersHasMore, setFoldersHasMore] = useState(false);
-  const [promptsHasMore, setPromptsHasMore] = useState(false);
-  const [loadingFoldersMore, setLoadingFoldersMore] = useState(false);
-  const [loadingPromptsMore, setLoadingPromptsMore] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [folderFilter, setFolderFilter] = useState<FolderFilter>('all');
@@ -84,98 +87,114 @@ export function LibraryView({
   const [folderFormOpen, setFolderFormOpen] = useState(false);
   const [editingFolder, setEditingFolder] = useState<FolderDto | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);
     return () => clearTimeout(timer);
   }, [search]);
 
-  const handleUnauthorized = useCallback(
-    (message: string) => {
-      if (message === 'Unauthorized') {
-        onUnauthorized();
-        return true;
-      }
-      return false;
-    },
-    [onUnauthorized],
-  );
+  const foldersQuery = useInfiniteQuery({
+    queryKey: ['folders'],
+    queryFn: ({ pageParam }) =>
+      fetchFolders({ limit: DEFAULT_PAGE_LIMIT, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasMore
+        ? lastPage.pagination.offset + lastPage.pagination.limit
+        : undefined,
+  });
 
-  const loadFolders = useCallback(
-    async (offset = 0) => {
-      const requestId =
-        offset > 0 ? foldersRequestRef.current : ++foldersRequestRef.current;
-      try {
-        if (offset > 0) setLoadingFoldersMore(true);
-        const page = await fetchFolders({
-          limit: DEFAULT_PAGE_LIMIT,
-          offset,
-        });
-        if (requestId !== foldersRequestRef.current) return;
-        setFolders((prev) =>
-          offset > 0 ? [...prev, ...page.folders] : page.folders,
-        );
-        setFoldersHasMore(page.pagination.hasMore);
-      } catch (err) {
-        if (requestId !== foldersRequestRef.current) return;
-        const message =
-          err instanceof Error ? err.message : 'Failed to load folders';
-        if (!handleUnauthorized(message)) {
-          setError(message);
-        }
-      } finally {
-        if (offset > 0 && requestId === foldersRequestRef.current) {
-          setLoadingFoldersMore(false);
-        }
-      }
-    },
-    [handleUnauthorized],
-  );
+  const promptsQuery = useInfiniteQuery({
+    queryKey: ['prompts', { q: debouncedSearch, folderFilter, sharedFilter }],
+    queryFn: ({ pageParam }) =>
+      fetchPrompts({
+        ...promptListParams(debouncedSearch, folderFilter, sharedFilter),
+        limit: DEFAULT_PAGE_LIMIT,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasMore
+        ? lastPage.pagination.offset + lastPage.pagination.limit
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
 
-  const loadPrompts = useCallback(
-    async (offset = 0) => {
-      const requestId =
-        offset > 0 ? promptsRequestRef.current : ++promptsRequestRef.current;
-      try {
-        if (offset > 0) setLoadingPromptsMore(true);
-        const page = await fetchPrompts({
-          ...promptListParams(debouncedSearch, folderFilter, sharedFilter),
-          limit: DEFAULT_PAGE_LIMIT,
-          offset,
-        });
-        if (requestId !== promptsRequestRef.current) return;
-        setPrompts((prev) =>
-          offset > 0 ? [...prev, ...page.prompts] : page.prompts,
-        );
-        setPromptsHasMore(page.pagination.hasMore);
-      } catch (err) {
-        if (requestId !== promptsRequestRef.current) return;
-        const message =
-          err instanceof Error ? err.message : 'Failed to load prompts';
-        if (!handleUnauthorized(message)) {
-          setError(message);
-        }
-      } finally {
-        if (offset > 0 && requestId === promptsRequestRef.current) {
-          setLoadingPromptsMore(false);
-        }
-      }
-    },
-    [debouncedSearch, folderFilter, sharedFilter, handleUnauthorized],
+  const folders = useMemo(
+    () => foldersQuery.data?.pages.flatMap((page) => page.folders) ?? [],
+    [foldersQuery.data],
+  );
+  const prompts = useMemo(
+    () => promptsQuery.data?.pages.flatMap((page) => page.prompts) ?? [],
+    [promptsQuery.data],
   );
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void Promise.all([loadFolders(0), loadPrompts(0)]).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadFolders, loadPrompts]);
+    const queryError = foldersQuery.error ?? promptsQuery.error;
+    if (isUnauthorized(queryError)) {
+      onUnauthorized();
+    }
+  }, [foldersQuery.error, promptsQuery.error, onUnauthorized]);
+
+  const handleMutationError = (err: unknown, fallback: string) => {
+    if (isUnauthorized(err)) {
+      onUnauthorized();
+      return;
+    }
+    setError(errorMessage(err, fallback));
+  };
+
+  const updatePromptShare = useMutation({
+    mutationFn: (item: PromptDto) =>
+      updatePromptApi(item.id, { isShared: !item.isShared }),
+    onSuccess: async (updated) => {
+      setStatus(updated.isShared ? 'Prompt shared' : 'Prompt is private');
+      setError(null);
+      await queryClient.invalidateQueries({ queryKey: ['prompts'] });
+    },
+    onError: (err) => handleMutationError(err, 'Update failed'),
+  });
+
+  const updateFolderShare = useMutation({
+    mutationFn: (folder: FolderDto) =>
+      updateFolderApi(folder.id, { isShared: !folder.isShared }),
+    onSuccess: async (updated) => {
+      setStatus(updated.isShared ? 'Folder shared' : 'Folder is private');
+      setError(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['folders'] }),
+        queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+      ]);
+    },
+    onError: (err) => handleMutationError(err, 'Update failed'),
+  });
+
+  const deleteFolder = useMutation({
+    mutationFn: (folder: FolderDto) => deleteFolderApi(folder.id),
+    onSuccess: async (_data, folder) => {
+      setStatus('Folder deleted');
+      setConfirm(null);
+      setError(null);
+      setFolderFilter((prev) => (prev === folder.id ? 'all' : prev));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['folders'] }),
+        queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+      ]);
+    },
+    onError: (err) => handleMutationError(err, 'Delete failed'),
+  });
+
+  const deletePrompt = useMutation({
+    mutationFn: (item: PromptDto) => deletePromptApi(item.id),
+    onSuccess: async (_data, item) => {
+      setStatus('Prompt deleted');
+      setConfirm(null);
+      setError(null);
+      setExpandedId((prev) => (prev === item.id ? null : prev));
+      await queryClient.invalidateQueries({ queryKey: ['prompts'] });
+    },
+    onError: (err) => handleMutationError(err, 'Delete failed'),
+  });
 
   function openCreatePrompt() {
     setEditingPrompt(null);
@@ -197,84 +216,48 @@ export function LibraryView({
     setFolderFormOpen(true);
   }
 
-  async function handleTogglePromptShare(item: PromptDto) {
+  function handleTogglePromptShare(item: PromptDto) {
     if (item.ownerId !== currentUserId) {
       setError('Only the owner can change sharing');
       return;
     }
-    try {
-      const updated = await updatePromptApi(item.id, {
-        isShared: !item.isShared,
-      });
-      setPrompts((prev) =>
-        prev.map((p) => (p.id === updated.id ? updated : p)),
-      );
-      setStatus(updated.isShared ? 'Prompt shared' : 'Prompt is private');
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update failed';
-      if (!handleUnauthorized(message)) setError(message);
-    }
+    updatePromptShare.mutate(item);
   }
 
-  async function handleToggleFolderShare(folder: FolderDto) {
+  function handleToggleFolderShare(folder: FolderDto) {
     if (folder.ownerId !== currentUserId) {
       setError('Only the owner can change sharing');
       return;
     }
-    try {
-      const updated = await updateFolderApi(folder.id, {
-        isShared: !folder.isShared,
-      });
-      setFolders((prev) =>
-        prev.map((item) => (item.id === updated.id ? updated : item)),
-      );
-      setStatus(updated.isShared ? 'Folder shared' : 'Folder is private');
-      setError(null);
-      await loadPrompts(0);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Update failed';
-      if (!handleUnauthorized(message)) setError(message);
-    }
+    updateFolderShare.mutate(folder);
   }
 
-  async function confirmDelete() {
+  function confirmDelete() {
     if (!confirm) return;
-    setDeleting(true);
-    try {
-      if (confirm.type === 'folder') {
-        const folder = confirm.folder;
-        if (folder.ownerId !== currentUserId) {
-          setError('Only the owner can delete this folder');
-          return;
-        }
-        await deleteFolderApi(folder.id);
-        setStatus('Folder deleted');
-        if (folderFilter === folder.id) {
-          setFolderFilter('all');
-        }
-        await Promise.all([loadFolders(0), loadPrompts(0)]);
-      } else {
-        const item = confirm.prompt;
-        if (item.ownerId !== currentUserId) {
-          setError('Only the owner can delete this prompt');
-          return;
-        }
-        await deletePromptApi(item.id);
-        setStatus('Prompt deleted');
-        setPrompts((prev) => prev.filter((p) => p.id !== item.id));
-        if (expandedId === item.id) setExpandedId(null);
+    if (confirm.type === 'folder') {
+      const folder = confirm.folder;
+      if (folder.ownerId !== currentUserId) {
+        setError('Only the owner can delete this folder');
+        return;
       }
-      setConfirm(null);
-      setError(null);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Delete failed';
-      if (!handleUnauthorized(message)) setError(message);
-    } finally {
-      setDeleting(false);
+      deleteFolder.mutate(folder);
+      return;
     }
+    const item = confirm.prompt;
+    if (item.ownerId !== currentUserId) {
+      setError('Only the owner can delete this prompt');
+      return;
+    }
+    deletePrompt.mutate(item);
   }
 
+  const foldersLoading = foldersQuery.isPending && !foldersQuery.data;
+  const promptsLoading = promptsQuery.isPending && !promptsQuery.data;
+  const queryError = foldersQuery.error ?? promptsQuery.error;
+  const displayError = isUnauthorized(queryError)
+    ? error
+    : (error ??
+      (queryError ? errorMessage(queryError, 'Failed to load') : null));
   const defaultFolderId =
     folderFilter !== 'all' && folderFilter !== 'none' ? folderFilter : null;
 
@@ -287,7 +270,7 @@ export function LibraryView({
       />
 
       <div className="flex min-h-0 flex-1">
-        {loading ? (
+        {foldersLoading ? (
           <aside className="flex w-[11.5rem] shrink-0 flex-col gap-2 border-r border-border/70 p-2">
             <Skeleton className="h-7 w-full rounded-md" />
             <Skeleton className="h-8 w-full rounded-md" />
@@ -299,13 +282,13 @@ export function LibraryView({
             folders={folders}
             value={folderFilter}
             currentUserId={currentUserId}
-            hasMore={foldersHasMore}
-            loadingMore={loadingFoldersMore}
-            onLoadMore={() => void loadFolders(folders.length)}
+            hasMore={Boolean(foldersQuery.hasNextPage)}
+            loadingMore={foldersQuery.isFetchingNextPage}
+            onLoadMore={() => void foldersQuery.fetchNextPage()}
             onChange={setFolderFilter}
             onCreate={openCreateFolder}
             onEdit={openEditFolder}
-            onShare={(folder) => void handleToggleFolderShare(folder)}
+            onShare={handleToggleFolderShare}
             onDelete={(folder) => setConfirm({ type: 'folder', folder })}
           />
         )}
@@ -314,26 +297,26 @@ export function LibraryView({
           <SearchToolbar
             search={search}
             sharedFilter={sharedFilter}
-            error={error}
+            error={displayError}
             status={status}
             onSearchChange={setSearch}
             onSharedFilterChange={setSharedFilter}
           />
           <PromptList
-            loading={loading}
+            loading={promptsLoading}
             prompts={prompts}
             expandedId={expandedId}
             currentUserId={currentUserId}
-            hasMore={promptsHasMore}
-            loadingMore={loadingPromptsMore}
+            hasMore={Boolean(promptsQuery.hasNextPage)}
+            loadingMore={promptsQuery.isFetchingNextPage}
             onCreate={openCreatePrompt}
             onToggle={(id) =>
               setExpandedId((prev) => (prev === id ? null : id))
             }
             onEdit={openEditPrompt}
-            onShare={(item) => void handleTogglePromptShare(item)}
+            onShare={handleTogglePromptShare}
             onDelete={(item) => setConfirm({ type: 'prompt', prompt: item })}
-            onLoadMore={() => void loadPrompts(prompts.length)}
+            onLoadMore={() => void promptsQuery.fetchNextPage()}
           />
         </section>
       </div>
@@ -344,13 +327,11 @@ export function LibraryView({
           open
           onOpenChange={setPromptFormOpen}
           prompt={editingPrompt}
-          folders={folders}
           defaultFolderId={
             editingPrompt ? editingPrompt.folderId : defaultFolderId
           }
-          onSaved={async () => {
+          onSaved={() => {
             setStatus(editingPrompt ? 'Prompt updated' : 'Prompt created');
-            await loadPrompts(0);
           }}
         />
       ) : null}
@@ -361,9 +342,8 @@ export function LibraryView({
           open
           onOpenChange={setFolderFormOpen}
           folder={editingFolder}
-          onSaved={async () => {
+          onSaved={() => {
             setStatus(editingFolder ? 'Folder updated' : 'Folder created');
-            await Promise.all([loadFolders(0), loadPrompts(0)]);
           }}
         />
       ) : null}
@@ -380,11 +360,11 @@ export function LibraryView({
               ? `Delete “${confirm.prompt.title}”?`
               : ''
         }
-        confirming={deleting}
+        confirming={deleteFolder.isPending || deletePrompt.isPending}
         onOpenChange={(open) => {
           if (!open) setConfirm(null);
         }}
-        onConfirm={() => void confirmDelete()}
+        onConfirm={confirmDelete}
       />
     </div>
   );
