@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
+import { BrandMark } from '@/components/brand-mark';
 import { ConfirmDialog } from '@/components/library/confirm-dialog';
 import { FolderForm } from '@/components/library/folder-form';
 import {
@@ -382,7 +383,8 @@ function LibraryHeader({
   return (
     <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border/70 px-3 py-2.5">
       <div className="min-w-0">
-        <h1 className="font-heading text-lg font-semibold tracking-tight">
+        <h1 className="font-heading flex items-center gap-2 text-lg font-semibold tracking-tight">
+          <BrandMark className="size-5" />
           Cue Q
         </h1>
         <p className="truncate text-xs text-muted-foreground">

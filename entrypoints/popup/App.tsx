@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { BrandMark } from '@/components/brand-mark';
 import { LibraryView } from '@/components/library/library-view';
 import { resetSession } from '@/components/providers/query-provider';
 import { Button } from '@/components/ui/button';
@@ -60,7 +61,8 @@ export default function App() {
 
     return (
       <div className="cue-atmosphere flex h-full flex-col items-center justify-center px-6 py-8 text-center">
-        <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="font-heading flex items-center justify-center gap-2 text-3xl font-semibold tracking-tight text-foreground">
+          <BrandMark className="size-8" />
           Cue Q
         </h1>
         <p className="mt-2 max-w-[16rem] text-sm text-muted-foreground">

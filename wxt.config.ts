@@ -1,8 +1,12 @@
+import type {} from '@wxt-dev/auto-icons';
 import { defineConfig } from 'wxt';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
-  modules: ['@wxt-dev/module-react'],
+  modules: ['@wxt-dev/module-react', '@wxt-dev/auto-icons'],
+  autoIcons: {
+    baseIconPath: 'assets/icon.svg',
+  },
   // Keep clear of Next.js (cue-q) on :3000 — otherwise localhost auth hits WXT and 404s.
   dev: {
     server: {
