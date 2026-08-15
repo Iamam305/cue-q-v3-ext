@@ -2,7 +2,7 @@
   "name": "cueq-ext",
   "description": "Cue Q Chrome extension — access your prompt library.",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wxt --port 3100",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@fontsource/noto-sans": "^5.3.0",
+    "@fontsource/raleway": "^5.3.0",
     "@remixicon/react": "^4.9.0",
     "@tanstack/react-query": "^5.101.4",
     "class-variance-authority": "^0.7.1",

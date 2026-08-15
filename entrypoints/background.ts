@@ -1,3 +1,3 @@
 export default defineBackground(() => {
-  console.log('Hello background!', { id: browser.runtime.id });
+  // Service worker required for chrome.identity auth. No extra listeners.
 });
