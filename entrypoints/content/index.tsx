@@ -54,8 +54,6 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
-    injectNotoSansFonts();
-
     const ui = await createShadowRootUi(ctx, {
       name: 'cueq-quick-search',
       position: 'overlay',
@@ -79,6 +77,13 @@ export default defineContentScript({
       },
     });
 
+    try {
+      await injectNotoSansFonts(ui.shadow);
+    } catch {
+      // Overlay still mounts with system fallbacks if a font fails to load.
+    }
+    ui.uiContainer.style.fontFamily =
+      '"Noto Sans", ui-sans-serif, system-ui, sans-serif';
     ui.mount();
   },
 });

@@ -34,7 +34,8 @@ Spot-check the unzipped `manifest.json`:
 3. **Graphic assets** — 128px icon comes from the zip; add the five screenshots and optional promo tiles from `store/assets/`.
 4. **Privacy** — policy URL `https://cue-q.com/privacy`; answers from [PRIVACY_PRACTICES.md](PRIVACY_PRACTICES.md).
 5. **Permissions** — justifications from [PERMISSION_JUSTIFICATIONS.md](PERMISSION_JUSTIFICATIONS.md).
-6. **Distribution** — regions, public vs unlisted, no mature content, no payments.
+6. **Test instructions** — credentials plus additional steps from [TEST_INSTRUCTIONS.md](TEST_INSTRUCTIONS.md).
+7. **Distribution** — regions, public vs unlisted, no mature content, no payments.
 
 ## After Google assigns an extension ID
 

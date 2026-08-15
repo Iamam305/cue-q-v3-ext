@@ -42,9 +42,14 @@
   --radius: 0.65rem;
   --background: oklch(0.985 0.006 220);
   --foreground: oklch(0.2 0.02 230);
-  font-family: var(--font-sans);
+  /* Beat WXT's :host { all: initial !important } reset. */
+  font-family: "Noto Sans", ui-sans-serif, system-ui, sans-serif !important;
   color: var(--foreground);
   line-height: 1.4;
+}
+
+#cueq-quick-search-root {
+  font-family: "Noto Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {

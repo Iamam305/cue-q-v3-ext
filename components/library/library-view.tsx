@@ -26,6 +26,7 @@ import {
   type FolderDto,
   fetchFolders,
   fetchPrompts,
+  type MeBilling,
   type PromptDto,
   updateFolderApi,
   updatePromptApi,
@@ -42,6 +43,7 @@ type ConfirmState =
 
 type LibraryViewProps = {
   user: CueqUser;
+  billing: MeBilling | null;
   onSignOut: () => void;
   onUnauthorized: () => void;
 };
@@ -69,6 +71,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 export function LibraryView({
   user,
+  billing,
   onSignOut,
   onUnauthorized,
 }: LibraryViewProps) {
@@ -180,6 +183,7 @@ export function LibraryView({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['folders'] }),
         queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
       ]);
     },
     onError: (err) => handleMutationError(err, 'Delete failed'),
@@ -192,7 +196,10 @@ export function LibraryView({
       setConfirm(null);
       setError(null);
       setExpandedId((prev) => (prev === item.id ? null : prev));
-      await queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
+      ]);
     },
     onError: (err) => handleMutationError(err, 'Delete failed'),
   });
@@ -266,6 +273,7 @@ export function LibraryView({
     <div className="cue-atmosphere relative flex h-full flex-col">
       <LibraryHeader
         user={user}
+        billing={billing}
         onCreatePrompt={openCreatePrompt}
         onSignOut={onSignOut}
       />
@@ -373,13 +381,22 @@ export function LibraryView({
 
 function LibraryHeader({
   user,
+  billing,
   onCreatePrompt,
   onSignOut,
 }: {
   user: CueqUser;
+  billing: MeBilling | null;
   onCreatePrompt: () => void;
   onSignOut: () => void;
 }) {
+  const quota =
+    billing && billing.plan === 'free'
+      ? `${billing.usage.prompts.used}/${billing.usage.prompts.limit} prompts · ${billing.usage.folders.used}/${billing.usage.folders.limit} folders`
+      : billing?.plan === 'pro'
+        ? 'Pro · unlimited library'
+        : null;
+
   return (
     <header className="flex shrink-0 items-start justify-between gap-2 border-b border-border/70 px-3 py-2.5">
       <div className="min-w-0">
@@ -388,7 +405,7 @@ function LibraryHeader({
           Cue Q
         </h1>
         <p className="truncate text-xs text-muted-foreground">
-          {user.name || user.email}
+          {quota ?? (user.name || user.email)}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">

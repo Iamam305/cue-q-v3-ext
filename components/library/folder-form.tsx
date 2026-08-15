@@ -40,6 +40,7 @@ export function FolderForm({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['folders'] }),
         queryClient.invalidateQueries({ queryKey: ['prompts'] }),
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
       ]);
       onSaved();
       onOpenChange(false);

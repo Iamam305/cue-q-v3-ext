@@ -4,15 +4,14 @@ import { LibraryView } from '@/components/library/library-view';
 import { resetSession } from '@/components/providers/query-provider';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getMe } from '@/lib/api';
+import { getMe, type MeResponse } from '@/lib/api';
 import { loginWithChromeIdentity, logout } from '@/lib/auth';
 import { getUser } from '@/lib/storage';
 
-async function fetchSession() {
+async function fetchSession(): Promise<MeResponse | null> {
   const stored = await getUser();
   if (!stored) return null;
-  const me = await getMe();
-  return me.user;
+  return getMe();
 }
 
 export default function App() {
@@ -25,8 +24,8 @@ export default function App() {
 
   const signIn = useMutation({
     mutationFn: loginWithChromeIdentity,
-    onSuccess: (user) => {
-      queryClient.setQueryData(['me'], user);
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
     },
   });
 
@@ -50,8 +49,8 @@ export default function App() {
     );
   }
 
-  const user = meQuery.data;
-  if (!user) {
+  const me = meQuery.data;
+  if (!me?.user) {
     const error =
       signIn.error instanceof Error
         ? signIn.error.message
@@ -86,7 +85,8 @@ export default function App() {
 
   return (
     <LibraryView
-      user={user}
+      user={me.user}
+      billing={me.billing}
       onSignOut={() => void handleSignOut()}
       onUnauthorized={handleUnauthorized}
     />

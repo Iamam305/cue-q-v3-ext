@@ -48,6 +48,14 @@ export type QuickSearchPrompts = PaginatedPrompts & {
   folderNotFound?: boolean;
 };
 
+export type MeBilling = {
+  plan: 'free' | 'pro';
+  usage: {
+    prompts: { used: number; limit: number | null };
+    folders: { used: number; limit: number | null };
+  };
+};
+
 export type MeResponse = {
   user: CueqUser;
   session: {
@@ -55,6 +63,7 @@ export type MeResponse = {
     expiresAt: string | Date;
     activeOrganizationId: string | null;
   };
+  billing: MeBilling | null;
 };
 
 function toQuery(

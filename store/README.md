@@ -7,6 +7,7 @@ Use this folder to submit Cue Q.
 | [LISTING.md](LISTING.md) | Name, summary, description, screenshots |
 | [PRIVACY_PRACTICES.md](PRIVACY_PRACTICES.md) | Privacy questionnaire |
 | [PERMISSION_JUSTIFICATIONS.md](PERMISSION_JUSTIFICATIONS.md) | identity, storage, hosts, content scripts |
+| [TEST_INSTRUCTIONS.md](TEST_INSTRUCTIONS.md) | Reviewer credentials notes and additional instructions |
 | [UPLOAD_CHECKLIST.md](UPLOAD_CHECKLIST.md) | Step-by-step submit order |
 | [assets/](assets/) | 1280×800 screenshots and promo tiles |
 

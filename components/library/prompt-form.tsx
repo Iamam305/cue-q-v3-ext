@@ -60,6 +60,7 @@ export function PromptForm({
         : createPromptApi(input),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      await queryClient.invalidateQueries({ queryKey: ['me'] });
       onSaved();
       onOpenChange(false);
     },
